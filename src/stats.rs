@@ -161,17 +161,17 @@ impl Stats {
 
 		let ping_latencies = self.ping_latencies
 			.iter()
-			.map(|(_, duration)| duration.as_micros() as f64)
+			.map(|(_, duration)| duration.as_nanos() as f64)
 			.collect::<Vec<_>>();
 
 		let get_latencies = self.get_latencies
 			.iter()
-			.map(|(_, duration)| duration.as_micros() as f64)
+			.map(|(_, duration)| duration.as_nanos() as f64)
 			.collect::<Vec<_>>();
 
 		let set_latencies = self.set_latencies
 			.iter()
-			.map(|(_, duration)| duration.as_micros() as f64)
+			.map(|(_, duration)| duration.as_nanos() as f64)
 			.collect::<Vec<_>>();
 
 		let mut ping_data = Data::new(ping_latencies);
@@ -234,15 +234,15 @@ impl Stats {
 			let mut set_tma = TimeMovingAverage::default();
 
 			for (instant, duration) in &self.ping_latencies {
-				ping_tma.push(*instant, duration.as_micros());
+				ping_tma.push(*instant, duration.as_nanos());
 			}
 
 			for (instant, duration) in &self.get_latencies {
-				get_tma.push(*instant, duration.as_micros());
+				get_tma.push(*instant, duration.as_nanos());
 			}
 
 			for (instant, duration) in &self.set_latencies {
-				set_tma.push(*instant, duration.as_micros());
+				set_tma.push(*instant, duration.as_nanos());
 			}
 
 			let window = final_instant.duration_since(initial_instant) / 50;
@@ -332,7 +332,7 @@ impl AddAssign for Stats {
 fn print_stats(label: &'static str, times: &[(Instant, Duration)]) {
 	let latencies = times
 		.iter()
-		.map(|(_, duration)| duration.as_micros() as f64)
+		.map(|(_, duration)| duration.as_nanos() as f64)
 		.collect::<Vec<_>>();
 
 	let mut data = Data::new(latencies);
@@ -374,7 +374,7 @@ fn print_dist(data: &mut LatencyData) {
 		};
 
 		let label = format!("p{}", (quantile * multiplier).round());
-		let value = format!("{:.0}us", data.quantile(*quantile));
+		let value = format!("{:.0}ns", data.quantile(*quantile));
 
 		header = header.push(label, Align::Center, Style::Bold);
 		row = row.push(value, Align::Center, Style::Normal);
@@ -393,11 +393,17 @@ fn print_simple_stats(label: &'static str, data: &LatencyData) {
 		.sum::<f64>();
 
 	println!(
-		"\nAvg latency:\t{}us",
+		"\n{label} avg latency:\t{}ns",
 		(total_time / data.len() as f64).round(),
 	);
 
-	let rate = data.len() as f64 / (total_time / 1_000_000.0);
+
+	// for ms
+	//let rate = data.len() as f64 / (total_time / 1_000_000.0);
+
+	// want as nanos
+	let rate = data.len() as f64 / (total_time / 1_000_000_000.0);
+
 
 	println!(
 		"{label}s/sec:\t{}",
