@@ -53,7 +53,7 @@ struct Args {
 	trace_path: Option<PathBuf>,
 
 	//try with 10 clients
-	#[arg(short, long, default_value_t = 10)]
+	#[arg(short, long, default_value_t = 4)]
 	clients: u32,
 
 	#[arg(short, long)]
