@@ -164,7 +164,6 @@ impl BenchmarkClient {
 			Err(_) => {
 				let size = access.value.len() as u64;
 				let set_start_time = Instant::now();
-
 				self.client.set(access.key, access.value, access.ttl)?;
 				self.stats.store_set_time(set_start_time);
 				self.stats.store_set_size(size);
