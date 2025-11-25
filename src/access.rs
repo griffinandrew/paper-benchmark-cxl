@@ -25,7 +25,7 @@ pub struct Access {
 	pub command: Command,
 
 	pub key: String,
-	pub value: Box<[u8]>,
+	pub value: Box<[u8]>, //so this would need to be changed...... but paper value should do that??????? 
 
 	pub ttl: Option<u32>,
 }

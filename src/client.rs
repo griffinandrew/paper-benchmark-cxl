@@ -29,6 +29,13 @@ pub struct BenchmarkClient {
 	client_type: ClientType,
 }
 
+//counters for sets and gets in traces
+#[cfg(debug_assertions)] static mut NUM_GETS: u64 = 0;
+#[cfg(debug_assertions)] static mut NUM_SETS: u64 = 0;
+#[cfg(debug_assertions)] static PRINT_THRESHOLD: u64 = 100000;
+#[cfg(debug_assertions)] static mut NUM_REQS: u64 = 0;
+
+
 #[derive(Debug, Copy, Clone, ValueEnum)]
 pub enum ClientType {
 	Lookaside,
@@ -135,7 +142,6 @@ impl BenchmarkClient {
 				self.stats.store_set_size(size);
 			},
 		}
-
 		Ok(())
 	}
 
@@ -148,6 +154,7 @@ impl BenchmarkClient {
 
 		match self.client.get(&access.key) {
 			Ok(value) => {
+				#[cfg(debug_assertions)] {unsafe { NUM_GETS += 1; }}
 				self.stats.store_get_time(get_start_time);
 
 				let value: &str = (&value)
@@ -167,7 +174,22 @@ impl BenchmarkClient {
 				self.client.set(access.key, access.value, access.ttl)?;
 				self.stats.store_set_time(set_start_time);
 				self.stats.store_set_size(size);
+				#[cfg(debug_assertions)] {unsafe { NUM_SETS += 1; }}
 			},
+		}
+
+		#[cfg(debug_assertions)] {
+			unsafe {
+				NUM_REQS += 1;
+				if NUM_REQS % PRINT_THRESHOLD == 0 {
+					let total = NUM_GETS + NUM_SETS;
+					let num_get = NUM_GETS;
+					let num_set = NUM_SETS;
+					println!("Processed {} requests ({} gets, {} sets)", total, num_get, num_set);
+					println!("Get ratio: {:.2}%", (num_get as f64 / total as f64) * 100.0);
+					println!("Set ratio: {:.2}%", (num_set as f64 / total as f64) * 100.0);
+				}
+			}
 		}
 
 		Ok(())
