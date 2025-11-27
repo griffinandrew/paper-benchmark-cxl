@@ -12,7 +12,7 @@ keywords = ["caching", "PaperCache"]
 categories = ["caching"]
 
 [dependencies]
-paper-client = "1.10.1"
+#paper-client = "1.10.1"
 kwik = "1.18.6"
 clap = { version = "4.5.40", features = ["derive"] }
 byteorder = "1.5.0"
@@ -22,10 +22,18 @@ spin_sleep = "1.3.2"
 
 
 
+[features]
+allocator_api = []
+default = []
+all_dram = []
+original = []
+
+
+
 
 [dependencies.paper-cache]
 git = "ssh://git@github.com/griffinandrew/paper-cache-cxl.git"
 branch = "libcache"
-features = [ "all_dram"]
+features = [ "allocator_api"]
 
 
