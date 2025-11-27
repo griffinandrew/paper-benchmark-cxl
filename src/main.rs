@@ -1,5 +1,7 @@
-/*
- * Copyright (c) Kia Shakiba
+
+/* 
+
+/* Copyright (c) Kia Shakiba
  *
  * This source code is licensed under the GNU AGPLv3 license found in the
  * LICENSE file in the root directory of this source tree.
@@ -208,3 +210,472 @@ where
 
 	Ok(last_access.timestamp - first_access.timestamp)
 }
+
+
+
+
+
+
+
+
+mod access;
+mod client;
+mod stats;
+mod cache_backend;
+
+use std::{
+    thread,
+    sync::Arc,
+    io::{self, Seek, SeekFrom},
+    path::{Path, PathBuf},
+    time::Duration,
+};
+
+use clap::Parser;
+use crossbeam_channel::bounded;
+
+use kwik::{
+    fmt,
+    file::{
+        FileReader,
+        binary::{BinaryReader, SizedChunk},
+    },
+    progress::{Progress, Tag},
+};
+
+use crate::{
+    client::{BenchmarkClient, ClientType, ClientEvent},
+    access::Access,
+    stats::Stats,
+    cache_backend::{PaperClientBackend, PaperCacheBackend, CacheBackend},
+};
+
+const PING_TEST_COUNT: u64 = 1_000_000;
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(long, default_value = "127.0.0.1")]
+    host: String,
+
+    #[arg(long, default_value_t = 3145)]
+    port: u32,
+
+    #[arg(short, long)]
+    auth: Option<String>,
+
+    #[arg(short, long)]
+    trace_path: Option<PathBuf>,
+
+    #[arg(short, long, default_value_t = 4)]
+    clients: u32,
+
+    #[arg(short, long)]
+    native_time: bool,
+
+    #[arg(long, default_value_t = ClientType::Lookaside)]
+    client_type: ClientType,
+
+    #[arg(long)]
+    output_csv: Option<PathBuf>,
+
+    #[arg(long)]
+    output_plot: Option<PathBuf>,
+
+    /// Use the in-process paper_cache implementation rather than remote paper server
+    #[arg(long)]
+    use_cache: bool,
+
+    /// Max cache size in bytes for in-process cache (only used when --use-cache is set)
+    #[arg(long, default_value_t = 1_000_000_000u64)]
+    cache_max_size: u64,
+}
+
+fn main() {
+    let args = Args::parse();
+
+    assert!(args.clients > 0);
+
+    let paper_addr = format!("paper://{}:{}", args.host, args.port);
+    let paper_addr = Arc::new(paper_addr);
+
+    let (sender, receiver) = bounded::<ClientEvent>(args.clients as usize);
+
+    println!("Client type: {}", args.client_type);
+    println!("Initializing {} client(s)", args.clients);
+
+    let clients = (0..args.clients)
+        .map(|_| {
+            let paper_addr = Arc::clone(&paper_addr);
+            let receiver = receiver.clone();
+
+            // Build and supply the backend object
+            let backend: Box<dyn CacheBackend> = if args.use_cache {
+                Box::new(
+                    PaperCacheBackend::new(args.cache_max_size)
+                        .expect("Could not create PaperCacheBackend"),
+                )
+            } else {
+                Box::new(
+                    PaperClientBackend::new(&paper_addr)
+                        .expect("Could not create PaperClientBackend"),
+                )
+            };
+
+            BenchmarkClient::new(backend, args.auth.clone(), receiver)
+                .expect("Could not create client.")
+                .with_client_type(args.client_type)
+        })
+        .collect::<Vec<BenchmarkClient>>();
+
+    let tasks = clients
+        .into_iter()
+        .map(|mut client| thread::spawn(move || client.run()))
+        .collect::<Vec<_>>();
+
+    if args.trace_path.is_none() {
+        println!("\nPerforming {} pings", fmt::number(PING_TEST_COUNT));
+
+        let mut progress = Progress::new(PING_TEST_COUNT)
+            .with_tag(Tag::Tps)
+            .with_tag(Tag::Eta)
+            .with_tag(Tag::Time);
+
+        for _ in 0..PING_TEST_COUNT {
+            sender.send(ClientEvent::Ping)
+                .expect("Could not send ping to client.");
+
+            progress.tick(1);
+        }
+    }
+
+    if let Some(trace_path) = &args.trace_path {
+        if args.native_time {
+            let timespan = get_trace_timespan(trace_path)
+                .expect("Invalid trace path.");
+
+            println!("\nUsing native access time.");
+            println!("Total trace timestamp: {}", fmt::timespan(timespan));
+        }
+
+        let reader = BinaryReader::<Access>::from_path(trace_path)
+            .expect("Invalid trace path.");
+
+        println!("\nProcessing {} accesses", fmt::number(reader.size() / Access::chunk_size() as u64));
+
+        let mut progress = Progress::new(reader.size())
+            .with_tag(Tag::Tps)
+            .with_tag(Tag::Eta)
+            .with_tag(Tag::Time);
+
+        let mut prev_access_timestamp: Option<u64> = None;
+
+        for mut access in reader {
+            if args.native_time {
+                let prev_timestamp = prev_access_timestamp.unwrap_or(access.timestamp);
+
+                if prev_timestamp > access.timestamp {
+                    panic!("Invalid timestamp order.");
+                }
+
+                let sleep_duration = Duration::from_millis(access.timestamp - prev_timestamp);
+                spin_sleep::sleep(sleep_duration);
+
+                prev_access_timestamp = Some(access.timestamp);
+            } else {
+                access.ttl = None;
+            }
+
+            sender.send(ClientEvent::Access(access))
+                .expect("Could not send access to client.");
+
+            progress.tick(Access::chunk_size());
+        }
+    }
+
+    drop(sender);
+
+    let mut stats = Stats::default();
+
+    for task in tasks {
+        stats += task
+            .join()
+            .expect("Could not terminate client")
+            .expect("Error executing client requests");
+    }
+
+    stats.print_ping_stats();
+    stats.print_get_stats();
+    stats.print_set_stats();
+
+    if args.output_csv.is_some() || args.output_plot.is_some() {
+        println!();
+    }
+
+    if let Some(path) = &args.output_csv {
+        stats.save_latency_percentiles(path)
+            .expect("Could not save latency percentiles.");
+
+        println!("Saved CSV to <{}>.", path.to_str().unwrap_or(""));
+    }
+
+    if let Some(path) = &args.output_plot {
+        stats.save_latency_plot(path)
+            .expect("Could not save latency plot.");
+
+        println!("Saved plot to <{}>.", path.to_str().unwrap_or(""));
+    }
+}
+
+fn get_trace_timespan<P>(path: P) -> io::Result<u64>
+where
+    P: AsRef<Path>,
+{
+    let mut reader = BinaryReader::<Access>::from_path(path)?;
+    let first_access = reader.read_chunk()?;
+
+    reader.seek(SeekFrom::End(-(Access::chunk_size() as i64)))?;
+    let last_access = reader.read_chunk()?;
+
+    if last_access.timestamp < first_access.timestamp {
+        panic!("Invalid timestamp order.");
+    }
+
+    Ok(last_access.timestamp - first_access.timestamp)
+}
+
+
+
+
+*/
+
+
+
+
+mod access;
+mod client;
+mod stats;
+mod cache_backend;
+
+use std::{
+    thread,
+    io::{self, Seek, SeekFrom},
+    path::{Path, PathBuf},
+    time::Duration,
+};
+
+use clap::Parser;
+use crossbeam_channel::bounded;
+
+use kwik::{
+    fmt,
+    file::{
+        FileReader,
+        binary::{BinaryReader, SizedChunk},
+    },
+    progress::{Progress, Tag},
+};
+
+use crate::{
+    client::{BenchmarkClient, ClientType, ClientEvent},
+    access::Access,
+    stats::Stats,
+    cache_backend::{PaperCacheBackend, CacheBackend},
+};
+
+const PING_TEST_COUNT: u64 = 1_000_000;
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    // kept for compatibility but they are not used when running in-process cache
+    #[arg(long, default_value = "127.0.0.1")]
+    host: String,
+
+    #[arg(long, default_value_t = 3145)]
+    port: u32,
+
+    #[arg(short, long)]
+    auth: Option<String>,
+
+    #[arg(short, long)]
+    trace_path: Option<PathBuf>,
+
+    #[arg(short, long, default_value_t = 1)]
+    clients: u32,
+
+    #[arg(short, long)]
+    native_time: bool,
+
+    #[arg(long, default_value_t = ClientType::Lookaside)]
+    client_type: ClientType,
+
+    #[arg(long)]
+    output_csv: Option<PathBuf>,
+
+    #[arg(long)]
+    output_plot: Option<PathBuf>,
+
+    /// Use the in-process paper_cache implementation (default: true)
+    #[arg(long, default_value_t = true)]
+    use_cache: bool,
+
+    /// Max cache size in bytes for in-process cache (only used when --use-cache is set)
+    #[arg(long, default_value_t = 1_000_000_000u64)]
+    cache_max_size: u64,
+}
+
+fn main() {
+    let args = Args::parse();
+
+    assert!(args.clients > 0);
+
+    let (sender, receiver) = bounded::<ClientEvent>(args.clients as usize);
+
+    println!("Client type: {}", args.client_type);
+    println!("Initializing {} client(s)", args.clients);
+
+    let clients = (0..args.clients)
+        .map(|_| {
+            let receiver = receiver.clone();
+
+            // Build and supply the backend object:
+            // we use the in-process PaperCache backend and ignore remote server parameters
+            let backend: Box<dyn CacheBackend> = if args.use_cache {
+                Box::new(
+                    PaperCacheBackend::new(args.cache_max_size)
+                        .expect("Could not create PaperCacheBackend"),
+                )
+            } else {
+                // If someone explicitly disables --use-cache, we still create the in-process cache to avoid networking;
+                // alternatively we could error here. For now: create the in-process cache anyway.
+                Box::new(
+                    PaperCacheBackend::new(args.cache_max_size)
+                        .expect("Could not create PaperCacheBackend"),
+                )
+            };
+
+            BenchmarkClient::new(backend, args.auth.clone(), receiver)
+                .expect("Could not create client.")
+                .with_client_type(args.client_type)
+        })
+        .collect::<Vec<BenchmarkClient>>();
+
+    let tasks = clients
+        .into_iter()
+        .map(|mut client| thread::spawn(move || client.run()))
+        .collect::<Vec<_>>();
+
+    if args.trace_path.is_none() {
+        println!("\nPerforming {} pings", fmt::number(PING_TEST_COUNT));
+
+        let mut progress = Progress::new(PING_TEST_COUNT)
+            .with_tag(Tag::Tps)
+            .with_tag(Tag::Eta)
+            .with_tag(Tag::Time);
+
+        for _ in 0..PING_TEST_COUNT {
+            sender.send(ClientEvent::Ping)
+                .expect("Could not send ping to client.");
+
+            progress.tick(1);
+        }
+    }
+
+    if let Some(trace_path) = &args.trace_path {
+        if args.native_time {
+            let timespan = get_trace_timespan(trace_path)
+                .expect("Invalid trace path.");
+
+            println!("\nUsing native access time.");
+            println!("Total trace timestamp: {}", fmt::timespan(timespan));
+        }
+
+        let reader = BinaryReader::<Access>::from_path(trace_path)
+            .expect("Invalid trace path.");
+
+        println!("\nProcessing {} accesses", fmt::number(reader.size() / Access::chunk_size() as u64));
+
+        let mut progress = Progress::new(reader.size())
+            .with_tag(Tag::Tps)
+            .with_tag(Tag::Eta)
+            .with_tag(Tag::Time);
+
+        let mut prev_access_timestamp: Option<u64> = None;
+
+        for mut access in reader {
+            if args.native_time {
+                let prev_timestamp = prev_access_timestamp.unwrap_or(access.timestamp);
+
+                if prev_timestamp > access.timestamp {
+                    panic!("Invalid timestamp order.");
+                }
+
+                let sleep_duration = Duration::from_millis(access.timestamp - prev_timestamp);
+                spin_sleep::sleep(sleep_duration);
+
+                prev_access_timestamp = Some(access.timestamp);
+            } else {
+                access.ttl = None;
+            }
+
+            sender.send(ClientEvent::Access(access))
+                .expect("Could not send access to client.");
+
+            progress.tick(Access::chunk_size());
+        }
+    }
+
+    drop(sender);
+
+    let mut stats = Stats::default();
+
+    for task in tasks {
+        stats += task
+            .join()
+            .expect("Could not terminate client")
+            .expect("Error executing client requests");
+    }
+
+    stats.print_ping_stats();
+    stats.print_get_stats();
+    stats.print_set_stats();
+
+    if args.output_csv.is_some() || args.output_plot.is_some() {
+        println!();
+    }
+
+    if let Some(path) = &args.output_csv {
+        stats.save_latency_percentiles(path)
+            .expect("Could not save latency percentiles.");
+
+        println!("Saved CSV to <{}>.", path.to_str().unwrap_or(""));
+    }
+
+    if let Some(path) = &args.output_plot {
+        stats.save_latency_plot(path)
+            .expect("Could not save latency plot.");
+
+        println!("Saved plot to <{}>.", path.to_str().unwrap_or(""));
+    }
+}
+
+fn get_trace_timespan<P>(path: P) -> io::Result<u64>
+where
+    P: AsRef<Path>,
+{
+    let mut reader = BinaryReader::<Access>::from_path(path)?;
+    let first_access = reader.read_chunk()?;
+
+    reader.seek(SeekFrom::End(-(Access::chunk_size() as i64)))?;
+    let last_access = reader.read_chunk()?;
+
+    if last_access.timestamp < first_access.timestamp {
+        panic!("Invalid timestamp order.");
+    }
+
+    Ok(last_access.timestamp - first_access.timestamp)
+}
+
+
+

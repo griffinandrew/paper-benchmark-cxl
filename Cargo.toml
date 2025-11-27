@@ -19,3 +19,13 @@ byteorder = "1.5.0"
 crossbeam-channel = "0.5.15"
 statrs = "0.18.0"
 spin_sleep = "1.3.2"
+
+
+
+
+[dependencies.paper-cache]
+git = "ssh://git@github.com/griffinandrew/paper-cache-cxl.git"
+branch = "libcache"
+features = [ "all_dram"]
+
+
