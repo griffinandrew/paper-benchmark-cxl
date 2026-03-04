@@ -422,6 +422,8 @@ fn merge_times(times_a: &[(Instant, Duration)], times_b: &[(Instant, Duration)])
 	times
 }
 
+
+#[cfg(not(feature = "hot_fix"))] //this is wrong... but want to see if it will run ..... 
 impl WriteRow for PercentileLatency {
 	fn as_row(&self, row: &mut RowData) -> io::Result<()> {
 		row.push(self.percentile);
@@ -439,5 +441,28 @@ impl WriteRow for PercentileLatency {
 		}
 
 		Ok(())
+	}
+}
+
+
+
+#[cfg(feature = "hot_fix")] //this is wrong... but want to see if it will run .....
+impl WriteRow for PercentileLatency {
+	fn as_row(&self, row: &mut RowData) -> () {
+		row.push(self.percentile);
+
+		if let Some(latency) = self.ping_latency {
+			row.push(latency);
+		}
+
+		if let Some(latency) = self.get_latency {
+			row.push(latency);
+		}
+
+		if let Some(latency) = self.set_latency {
+			row.push(latency);
+		}
+
+		()
 	}
 }

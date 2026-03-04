@@ -26,12 +26,72 @@ allocator_api = []
 default = []
 all_dram = []
 original = []
+hot_fix = []
 
 
 
 [dependencies.paper-cache]
 git = "ssh://git@github.com/griffinandrew/paper-cache-cxl.git"
-branch = "libcache+tiering"
-features = [ "allocator_api"]
+#branch = "libcache+tiering+hashalloc_k+v"
+#branch = "libcache+tiering+hashalloc_k+v+custom_hashmap+eviction_stacks_pmem"
+#branch = "libcache+tiering+hashalloc_k+v+custom_hashmap+instrumentation"
+#branch = "libcache+tiering+hashalloc_k+v+custom_hashmap+hash_tier"
+#branch = "libcache+tiering+hashalloc_k+v+custom_hashmap+hash_teiring_2"
 
+#branch = "original_tiering_manager"
+#branch = "all_functionality"
+
+branch = "libcache_working_branch"
+
+#hash_tier_copy_of_working
+
+
+features = ["key_value_pmem","enable_tiering_manager","hashtable_tiering","sets_dram"]
+
+#branch = "libcache+tiering+hashalloc_k+v+custom_hashmap+hash_tier_copy_of_working"
+
+
+#features = ["enable_tiering_manager","eviction_stacks_pmem","key_value_pmem"]
+
+#features = ["enable_tiering_manager","key_value_pmem"]
+
+#features = ["key_value_pmem"]
+
+#features = ["multitiering", "key_value_pmem"]
+
+#features = ["global_hashtable_pmem"]
+#features = ["key_value_pmem"]
+#features = ["all_dram"]
+
+
+#features = ["global_hashtable_pmem", "eviction_stack_pmem", "key_value_pmem"]
+#features = ["hashbrown_dram"]
+
+#features = ["eviction_stack_pmem" , "hashbrown_dram"]
+
+
+#features = ["hw_perf_counters", "hashbrown_dram"]
+#features = ["hw_perf_counters", "global_hashtable_pmem"]
+
+#features = ["global_flatmap_pmem"]
+
+
+#features = [ "all_dram"]
+
+#features = ["global_flatmap_dram", "all_dram"]
+
+#features = ["global_flatmap_dram", "all_dram" , "hw_perf_counters"]
+
+#features = ["global_flatmap_pmem", "hw_perf_counters"]
+
+#features = ["key_value_pmem","enable_tiering_manager","hashtable_tiering"]
+
+
+#features = ["key_value_pmem","enable_tiering_manager"]
+
+#features = ["flatmap_hash_and_object_tiering", "enable_tiering_manager", "key_value_pmem" ]
+
+#[profile.release]
+#debug = true
+#frame-pointer = "always"
 

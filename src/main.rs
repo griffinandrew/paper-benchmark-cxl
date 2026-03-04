@@ -507,7 +507,7 @@ struct Args {
     #[arg(short, long)]
     native_time: bool,
 
-    #[arg(long, default_value_t = ClientType::Lookaside)]
+    #[arg(long, default_value_t = ClientType::ReadThrough)]
     client_type: ClientType,
 
     #[arg(long)]
@@ -521,7 +521,7 @@ struct Args {
     use_cache: bool,
 
     /// Max cache size in bytes for in-process cache (only used when --use-cache is set)
-    #[arg(long, default_value_t = 1_000_000_000u64)]
+    #[arg(long, default_value_t = 1_000_000_000_000u64)]
     cache_max_size: u64,
 }
 
