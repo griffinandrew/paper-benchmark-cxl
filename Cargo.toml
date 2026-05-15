@@ -41,19 +41,39 @@ git = "ssh://git@github.com/griffinandrew/paper-cache-cxl.git"
 #branch = "original_tiering_manager"
 #branch = "all_functionality"
 
-branch = "libcache_working_branch"
+#branch = "working_branch_2"
+
+
+#branch = "vm_copy_of_working_branch_5_exp"
+
+
+#branch = "vm_copy_of_working_branch_5_exp_1240_mar30-2026"
+
+branch = "vm_libcache_6"
+
+#features = ["all_dram"]
 
 #hash_tier_copy_of_working
 
+#features = ["tiering"]
 
-features = ["key_value_pmem","enable_tiering_manager","hashtable_tiering","sets_dram"]
+#features = ["multitiering"]
 
-#branch = "libcache+tiering+hashalloc_k+v+custom_hashmap+hash_tier_copy_of_working"
+#features = ["all_dram", "eviction_stacks_pmem"]
 
+features = ["key_pmem_value_pmem"]
+
+#features = ["key_value_pmem","enable_tiering_manager","eviction_stacks_pmem","global_hashtable_pmem"]
+
+#features = ["global_hashtable_pmem","eviction_stacks_pmem"]
+
+#features = ["key_value_pmem","enable_tiering_manager","hashtable_tiering","sets_dram"]
 
 #features = ["enable_tiering_manager","eviction_stacks_pmem","key_value_pmem"]
 
 #features = ["enable_tiering_manager","key_value_pmem"]
+
+#features = ["key_value_pmem", "eviction_stacks_pmem"]
 
 #features = ["key_value_pmem"]
 
@@ -64,7 +84,7 @@ features = ["key_value_pmem","enable_tiering_manager","hashtable_tiering","sets_
 #features = ["all_dram"]
 
 
-#features = ["global_hashtable_pmem", "eviction_stack_pmem", "key_value_pmem"]
+#features = ["global_hashtable_pmem", "eviction_stacks_pmem", "key_value_pmem"]
 #features = ["hashbrown_dram"]
 
 #features = ["eviction_stack_pmem" , "hashbrown_dram"]

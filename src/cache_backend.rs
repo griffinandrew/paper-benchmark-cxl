@@ -178,8 +178,8 @@ pub struct PaperCacheBackend {
 #[cfg(not(feature = "allocator_api"))]
 impl PaperCacheBackend {
     pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // default to a single LFU policy; change if you want CLI policy selection
-        let cache = PaperCache::<u64, Box<[u8]>>::new(max_size, &[PaperPolicy::Lfu], PaperPolicy::Lfu)
+        // default to a single LRU policy; change if you want CLI policy selection
+        let cache = PaperCache::<u64, Box<[u8]>>::new(max_size, &[PaperPolicy::Lru], PaperPolicy::Lru)
             .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
         Ok(PaperCacheBackend { inner: cache })
     }
@@ -190,11 +190,11 @@ impl PaperCacheBackend {
 #[cfg(feature = "allocator_api")]
 impl PaperCacheBackend {
     pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // default to a single LFU policy; change if you want CLI policy selection
+        // default to a single LRU policy; change if you want CLI policy selection
         let cache = PaperCache::<u64, BufferPMEM>::new(
             max_size,
-            &[PaperPolicy::Lfu],
-            PaperPolicy::Lfu,
+            &[PaperPolicy::Lru],
+            PaperPolicy::Lru,
         )
         .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
         Ok(PaperCacheBackend { inner: cache })
@@ -213,7 +213,10 @@ impl CacheBackend for PaperCacheBackend {
         let key_u64 = key.parse::<u64>().map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
 
         match self.inner.get(&key_u64) {
-            Ok(boxed) => Ok(Some(boxed.to_vec())),
+            Ok(boxed) => {
+                //println!("Retrieved object length: {}", boxed.len());
+                Ok(Some(boxed.to_vec()))
+            }
             Err(err) => match err {
                 PcError::KeyNotFound => Ok(None),
                 other => Err(Box::new(other) as Box<dyn Error + Send + Sync>),

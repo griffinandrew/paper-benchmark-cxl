@@ -259,8 +259,10 @@ impl BenchmarkClient {
         self
     }
 
+
+    
     pub fn run(&mut self) -> Result<Stats, Box<dyn Error + Send + Sync>> {
-        let max_wait = Duration::from_secs(5);
+        let max_wait = Duration::from_secs(20);
 
         while let Ok(event) = self.events.recv_timeout(max_wait) {
             match event {
@@ -271,6 +273,40 @@ impl BenchmarkClient {
 
         Ok(self.stats.clone())
     }
+
+
+
+    /*
+    pub fn run(&mut self) -> Result<Stats, Box<dyn Error + Send + Sync>> {
+        let max_wait = Duration::from_secs(50);
+
+        loop {
+            match self.events.recv_timeout(max_wait) {
+                Ok(ClientEvent::Ping) => {
+                    if let Err(e) = self.handle_ping() {
+                        eprintln!("[client] ping error: {e}");
+                        return Err(e);
+                    }
+                }
+                Ok(ClientEvent::Access(access)) => {
+                    if let Err(e) = self.handle_access(access) {
+                        eprintln!("[client] access error: {e}");
+                        return Err(e);
+                    }
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                    eprintln!("[client] recv timeout - exiting");
+                    break;
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                    break;  // normal termination
+                }
+            }
+        }
+
+        Ok(self.stats.clone())
+    }
+        */
 
     fn handle_ping(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
         let start_time = Instant::now();
@@ -343,6 +379,8 @@ impl BenchmarkClient {
                 let value: Vec<u8> = value;
                     //.try_into()
                     //.map_err(|_| "Invalid value encoding")?;
+                //println!("Read-through get hit for key: {}, value length: {}", access.key, value.len());
+                //println!("Value content (first 100 bytes or full length if shorter): {:?}", &value[..std::cmp::min(100, value.len())]);
 
                 self.stats.store_get_size(value.len() as u64);
             },

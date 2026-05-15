@@ -404,7 +404,6 @@ fn print_simple_stats(label: &'static str, data: &LatencyData) {
 	// want as nanos
 	let rate = data.len() as f64 / (total_time / 1_000_000_000.0);
 
-
 	println!(
 		"{label}s/sec:\t{}",
 		fmt::number(rate as u64),

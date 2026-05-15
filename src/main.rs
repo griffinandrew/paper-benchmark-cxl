@@ -521,7 +521,10 @@ struct Args {
     use_cache: bool,
 
     /// Max cache size in bytes for in-process cache (only used when --use-cache is set)
-    #[arg(long, default_value_t = 1_000_000_000_000u64)]
+    //#[arg(long, default_value_t = 25_769_803_776u64)] //17_179_869_184 B      25_769_803_776  //over allocate to 25gb... 
+
+    #[arg(long, default_value_t = 25_769_803_776u64)]
+    //#[arg(long, default_value_t = 34_359_738_368u64)]
     cache_max_size: u64,
 }
 
@@ -531,6 +534,8 @@ fn main() {
     assert!(args.clients > 0);
 
     let (sender, receiver) = bounded::<ClientEvent>(args.clients as usize);
+
+   // let (sender, receiver) = bounded::<ClientEvent>(2 as usize);
 
     println!("Client type: {}", args.client_type);
     println!("Initializing {} client(s)", args.clients);
@@ -560,6 +565,8 @@ fn main() {
                 .with_client_type(args.client_type)
         })
         .collect::<Vec<BenchmarkClient>>();
+
+    drop(receiver); // drop the original receiver in the main thread since clients have their own clones
 
     let tasks = clients
         .into_iter()
@@ -626,7 +633,7 @@ fn main() {
         }
     }
 
-    drop(sender);
+    //drop(sender);
 
     let mut stats = Stats::default();
 
