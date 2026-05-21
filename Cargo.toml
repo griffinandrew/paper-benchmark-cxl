@@ -28,6 +28,7 @@ all_dram = []
 original = []
 hot_fix = []
 pmem_region_alloc = ["paper-cache/pmem_region_alloc"]
+bump_alloc = []
 
 [dependencies.paper-cache]
 git = "ssh://git@github.com/griffinandrew/paper-cache-cxl.git"
@@ -60,11 +61,13 @@ branch = "vm_libcache_7"
 
 #features = ["all_dram", "eviction_stacks_pmem", "eviction_stacks_pmem"]
 
-features = ["all_dram", "pmem_region_alloc"]
+#features = ["all_dram", "pmem_region_alloc"]
 
 #features = ["key_pmem_value_pmem"]
 
-#features = ["key_pmem_value_pmem", "pmem_region_alloc"]
+#features = ["key_pmem_value_pmem", "devdax_bump"]
+
+features = ["key_pmem_value_pmem", "pmem_region_alloc"]
 
 #features = ["key_value_pmem"]
 

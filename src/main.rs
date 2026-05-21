@@ -459,9 +459,9 @@ mod cache_backend;
 
 use paper_cache::allocator::HybridObjects;
 
-#[cfg(not(feature = "pmem_region_alloc"))]
-#[global_allocator]
-static GLOBAL: paper_cache::allocator::HybridObjects = paper_cache::allocator::HybridObjects;
+//#[cfg(not(feature = "pmem_region_alloc"))]
+//#[global_allocator]
+//static GLOBAL: paper_cache::allocator::HybridObjects = paper_cache::allocator::HybridObjects;
 //static GLOBAL: paper_cache::allocator::RegionHybrid = paper_cache::allocator::RegionHybrid;
 
 
@@ -551,14 +551,23 @@ fn prewarm(bytes: usize) {
 }
 
 
+#[cfg(feature = "devdax_bump")]
+fn init_storage() {
+    paper_cache::allocator::DevDaxBump::init();
+}
+
+
+
 fn main() {
     #[cfg(feature = "pmem_region_alloc")] { paper_cache::allocator::RegionHybrid::init();}
 
-    #[cfg(not(feature = "pmem_region_alloc"))]
-    paper_cache::allocator::HybridObjects::init_and_prewarm(
-        1,                                    // PMEM node
-        0,               // 48 GiB working set
-    );
+    //#[cfg(not(feature = "pmem_region_alloc"))]
+    //paper_cache::allocator::HybridObjects::init_and_prewarm(
+    //    1,                                    // PMEM node
+    //    0,               // 48 GiB working set
+    //);
+
+    #[cfg(feature = "devdax_bump")] { init_storage(); }
 
     //#[cfg(not(feature = "allocator_api"))] {
         // Pre-warm the allocator with a large allocation to ensure that the memory is resident and ready for use.
