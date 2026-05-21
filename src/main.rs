@@ -457,6 +457,14 @@ mod client;
 mod stats;
 mod cache_backend;
 
+use paper_cache::allocator::HybridObjects;
+
+#[cfg(not(feature = "pmem_region_alloc"))]
+#[global_allocator]
+static GLOBAL: paper_cache::allocator::HybridObjects = paper_cache::allocator::HybridObjects;
+//static GLOBAL: paper_cache::allocator::RegionHybrid = paper_cache::allocator::RegionHybrid;
+
+
 use std::{
     thread,
     io::{self, Seek, SeekFrom},
@@ -528,7 +536,39 @@ struct Args {
     cache_max_size: u64,
 }
 
+
+fn prewarm(bytes: usize) {
+    let mut v: Vec<u8> = vec![0u8; bytes];  // vec! zeros, which touches every byte
+    // Optional but cheap: explicit per-page touch to be sure even if a future
+    // allocator quirk skips zeroing.
+    let page = 4096usize;
+    let mut i = 0;
+    while i < bytes {
+        unsafe { std::ptr::write_volatile(v.as_mut_ptr().add(i), 0u8); }
+        i += page;
+    }
+    drop(v);  // returns to jemalloc's pool; decay-off keeps it resident
+}
+
+
 fn main() {
+    #[cfg(feature = "pmem_region_alloc")] { paper_cache::allocator::RegionHybrid::init();}
+
+    #[cfg(not(feature = "pmem_region_alloc"))]
+    paper_cache::allocator::HybridObjects::init_and_prewarm(
+        1,                                    // PMEM node
+        0,               // 48 GiB working set
+    );
+
+    //#[cfg(not(feature = "allocator_api"))] {
+        // Pre-warm the allocator with a large allocation to ensure that the memory is resident and ready for use.
+        // This can help reduce latency spikes during the benchmark caused by on-demand memory allocation.
+        //prewarm(25_769_803_776); // Pre-warm with 25 GB
+    //}
+
+    let tsc_hz = paper_cache::calibrate_tsc_hz();
+    
+    
     let args = Args::parse();
 
     assert!(args.clients > 0);
@@ -665,6 +705,8 @@ fn main() {
 
         println!("Saved plot to <{}>.", path.to_str().unwrap_or(""));
     }
+
+    paper_cache::report_all(tsc_hz);
 }
 
 fn get_trace_timespan<P>(path: P) -> io::Result<u64>
