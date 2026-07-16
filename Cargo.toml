@@ -19,6 +19,7 @@ byteorder = "1.5.0"
 crossbeam-channel = "0.5.15"
 statrs = "0.18.0"
 spin_sleep = "1.3.2"
+libc = "0.2.186"
 
 
 [features]
@@ -27,39 +28,45 @@ default = []
 all_dram = []
 original = []
 hot_fix = []
-pmem_region_alloc = ["paper-cache/pmem_region_alloc"]
+pmem_region_alloc = []
 bump_alloc = []
+devdax_bump = []
+umf = []
+value_dram = []
+daxpmem = []
+hybrid= []
 
 [dependencies.paper-cache]
 git = "ssh://git@github.com/griffinandrew/paper-cache-cxl.git"
-#branch = "libcache+tiering+hashalloc_k+v"
-#branch = "libcache+tiering+hashalloc_k+v+custom_hashmap+eviction_stacks_pmem"
-#branch = "libcache+tiering+hashalloc_k+v+custom_hashmap+instrumentation"
-#branch = "libcache+tiering+hashalloc_k+v+custom_hashmap+hash_tier"
-#branch = "libcache+tiering+hashalloc_k+v+custom_hashmap+hash_teiring_2"
 
-#branch = "original_tiering_manager"
-#branch = "all_functionality"
+#branch = "libcache8-testing"
 
-#branch = "working_branch_2"
+#branch = "libcache8-hardlimit"
 
+branch = "libcache8-claude"
 
-#branch = "vm_copy_of_working_branch_5_exp"
+#features=["lru_hybrid_cache"]
 
+#features=["lfu_hybrid_cache", "eviction_stacks_pmem"]
 
-#branch = "vm_copy_of_working_branch_5_exp_1240_mar30-2026"
+features=["lru_hybrid_cache"]
 
-branch = "vm_libcache_7"
+#features = ["all_dram"]
+
+#features = ["hashbrown_dram"] 
+
+#features = ["global_hashtable_pmem"]
 
 #features = ["all_dram","pmem_region_alloc"]
 
-#hash_tier_copy_of_working
+#features = ["all_dram", "devdax_bump", "eviction_stacks_pmem"]
+
 
 #features = ["tiering"]
 
 #features = ["multitiering"]
 
-#features = ["all_dram", "eviction_stacks_pmem", "eviction_stacks_pmem"]
+#features = ["all_dram"]
 
 #features = ["all_dram", "pmem_region_alloc"]
 
@@ -67,9 +74,8 @@ branch = "vm_libcache_7"
 
 #features = ["key_pmem_value_pmem", "devdax_bump"]
 
-features = ["key_pmem_value_pmem", "pmem_region_alloc"]
+#features = ["all_dram", "eviction_stacks_pmem"]
 
-#features = ["key_value_pmem"]
 
 #features = ["all_dram", "eviction_stacks_pmem", "region_hybrid_allocator"]
 
@@ -92,8 +98,9 @@ features = ["key_pmem_value_pmem", "pmem_region_alloc"]
 #features = ["key_value_pmem"]
 #features = ["all_dram"]
 
+#features = ["key_value_pmem", "devdax_bump"]
 
-#features = ["global_hashtable_pmem", "eviction_stacks_pmem", "key_value_pmem"]
+#features = ["global_hashtable_pmem", "devdax_bump"]
 #features = ["hashbrown_dram"]
 
 #features = ["eviction_stack_pmem" , "hashbrown_dram"]
@@ -123,4 +130,8 @@ features = ["key_pmem_value_pmem", "pmem_region_alloc"]
 #[profile.release]
 #debug = true
 #frame-pointer = "always"
+
+
+#[build]
+#rustflags = ["-C", "force-frame-pointers=yes"]
 

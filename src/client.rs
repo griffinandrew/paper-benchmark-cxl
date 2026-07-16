@@ -192,9 +192,9 @@ impl Display for ClientType {
 
 
 */
+//use std::sync::{Once};
 
-
-
+//static INIT: Once = Once::new(); 
 
 
 use std::{
@@ -355,7 +355,7 @@ impl BenchmarkClient {
                 let size = access.value.len() as u64;
                 let start_time = Instant::now();
 
-                self.client.set(access.key, access.value.to_vec(), access.ttl)?;
+                self.client.set(access.key, access.value, access.ttl)?;
 
                 self.stats.store_set_time(start_time);
                 self.stats.store_set_size(size);
@@ -390,7 +390,7 @@ impl BenchmarkClient {
                 let size = access.value.len() as u64;
                 let set_start_time = Instant::now();
 
-                self.client.set(access.key, access.value.to_vec(), access.ttl)?;
+                self.client.set(access.key, access.value, access.ttl)?;
 
                 self.stats.store_set_time(set_start_time);
                 self.stats.store_set_size(size);

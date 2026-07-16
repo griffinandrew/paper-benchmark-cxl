@@ -450,27 +450,36 @@ where
 */
 
 
-#![cfg_attr(feature = "allocator_api", feature(allocator_api))]
+//#![cfg_attr(any(feature = "allocator_api", feature = value_dram, feature(allocator_api), feature(clone_from_ref)))]
 
+#![cfg_attr(
+    any(feature = "allocator_api", feature = "value_dram"), // 1. The Condition
+    feature(allocator_api, clone_from_ref)      // 2. The Attribute to apply
+)]
 mod access;
 mod client;
 mod stats;
 mod cache_backend;
 
-use paper_cache::allocator::HybridObjects;
+//use paper_cache::allocator::HybridObjects;
 
 //#[cfg(not(feature = "pmem_region_alloc"))]
 //#[global_allocator]
 //static GLOBAL: paper_cache::allocator::HybridObjects = paper_cache::allocator::HybridObjects;
 //static GLOBAL: paper_cache::allocator::RegionHybrid = paper_cache::allocator::RegionHybrid;
 
+//#[global_allocator]
+//static GLOBAL: paper_cache::allocator::HybridObjects = paper_cache::allocator::HybridObjects;
+
+
 
 use std::{
     thread,
-    io::{self, Seek, SeekFrom},
+    io::{self, Seek, SeekFrom, BufRead, Write},
     path::{Path, PathBuf},
     time::Duration,
 };
+
 
 use clap::Parser;
 use crossbeam_channel::bounded;
@@ -558,15 +567,60 @@ fn init_storage() {
 
 
 
+fn prefault_fast_tier(buf: &mut [u8]) {
+    let ptr = buf.as_mut_ptr() as *mut libc::c_void;
+    let len = buf.len();
+
+    // Safety check: madvise requires page-aligned pointers.
+    // Vector allocations from jemalloc over 4KB are automatically page-aligned,
+    // but this guard ensures the kernel won't reject the call with EINVAL.
+    if (ptr as usize) % 4096 != 0 {
+        eprintln!("Warning: Buffer is not page-aligned. Falling back to safe manual touch.");
+        for page in buf.chunks_mut(4096) {
+            page[0] = 0;
+        }
+        return;
+    }
+
+    unsafe {
+        // Modern Linux kernels (5.14+) - populates page tables entirely in kernel space
+        let mut ret = libc::madvise(ptr, len, libc::MADV_POPULATE_WRITE);
+        
+        // Fallback for older kernels if MADV_POPULATE_WRITE isn't supported
+        if ret != 0 {
+            ret = libc::madvise(ptr, len, libc::MADV_WILLNEED);
+        }
+
+        if ret != 0 {
+            panic!("madvise failed to prefault memory. Error code: {}", ret);
+        }
+    }
+}
+
+
 fn main() {
     #[cfg(feature = "pmem_region_alloc")] { paper_cache::allocator::RegionHybrid::init();}
 
-    //#[cfg(not(feature = "pmem_region_alloc"))]
-    //paper_cache::allocator::HybridObjects::init_and_prewarm(
-    //    1,                                    // PMEM node
-    //    0,               // 48 GiB working set
-    //);
 
+
+    #[cfg(feature = "umf")]
+    paper_cache::allocator::HybridObjects::init_and_prewarm(
+        1,                                    // PMEM node
+        30 * 1024 * 1024 * 1024,               // 48 GiB working set
+    );
+
+    #[cfg(feature = "value_dram")]
+    paper_cache::allocator::ValueDRAM::init_and_prewarm(2, 8 * 1024 * 1024 * 1024); // 8 GiB working set
+
+    #[cfg(feature = "daxpmem")] {
+        paper_cache::allocator::DAXPMEM::init_and_prewarm();
+    }
+
+    //println!("warmup done (pid {}), attach perf then press enter... ", std::process::id());
+    //io::stderr().flush().unwrap();
+    //let mut line = String::new();
+    //io::stdin().lock().read_line(&mut line).unwrap();
+    
     #[cfg(feature = "devdax_bump")] { init_storage(); }
 
     //#[cfg(not(feature = "allocator_api"))] {
@@ -575,9 +629,21 @@ fn main() {
         //prewarm(25_769_803_776); // Pre-warm with 25 GB
     //}
 
-    let tsc_hz = paper_cache::calibrate_tsc_hz();
-    
-    
+    //let tsc_hz = paper_cache::calibrate_tsc_hz();
+    //println!("Starting benchmark...");
+
+    #[cfg(feature = "all_dram")] { 
+        let mut buf = vec![0u8; 25 * 1024 * 1024 * 1024];
+        //println!("Triggering kernel-space prefault into Fast Tier...");
+        prefault_fast_tier(&mut buf);
+
+        //println!("25 GB is fully resident in local physical memory. Running workload...");
+
+    }
+    //println!("25 GB is fully resident in local physical memory. Running workload...");
+
+
+
     let args = Args::parse();
 
     assert!(args.clients > 0);
@@ -696,6 +762,7 @@ fn main() {
     stats.print_ping_stats();
     stats.print_get_stats();
     stats.print_set_stats();
+    //CacheBackend::report_stats_lru(backend).expect("Could not report LRU stats.");
 
     if args.output_csv.is_some() || args.output_plot.is_some() {
         println!();
@@ -715,7 +782,8 @@ fn main() {
         println!("Saved plot to <{}>.", path.to_str().unwrap_or(""));
     }
 
-    paper_cache::report_all(tsc_hz);
+    //paper_cache::report_set(tsc_hz);
+    //paper_cache::report_get(tsc_hz);
 }
 
 fn get_trace_timespan<P>(path: P) -> io::Result<u64>

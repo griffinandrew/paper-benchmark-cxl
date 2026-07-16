@@ -30,11 +30,17 @@ pub struct Access {
 	pub ttl: Option<u32>,
 }
 
+
+use core::arch::x86_64::{_mm_clflush, _mm_sfence};
+
 impl SizedChunk for Access {
 	fn chunk_size() -> usize {
 		25
 	}
 }
+
+
+
 
 impl ReadChunk for Access {
 	fn from_chunk(buf: &[u8]) -> io::Result<Self> {
@@ -50,7 +56,17 @@ impl ReadChunk for Access {
 			.to_string();
 
 		let value_size = rdr.read_u32::<LittleEndian>()?;
-		let value = [0u8].repeat(value_size as usize).into();
+		let value: Box<[u8]> = [0u8].repeat(value_size as usize).into();
+
+		/*
+        unsafe {
+           let ptr = value.as_ptr();
+            for i in (0..value.len()).step_by(64) {
+                _mm_clflush(ptr.add(i) as *const u8);
+            }
+            _mm_sfence(); // Block until all cache lines are flushed to RAM
+        }
+		*/
 
 		let ttl = match rdr.read_u32::<LittleEndian>()? {
 			0 => None,
