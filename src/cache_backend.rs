@@ -152,12 +152,24 @@ use paper_cache::{TieredBuffer, CacheTierSize};
 /// - get returns Ok(Some(Vec<u8>)) for a cache hit,
 ///   Ok(None) for a cache miss,
 ///   Err(..) for fatal/backend errors.
-pub trait CacheBackend: Send {
-    fn ping(&mut self) -> Result<(), Box<dyn Error + Send + Sync>>;
-    fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>, Box<dyn Error + Send + Sync>>;
-    fn set(&mut self, key: String, value: Box<[u8]>, ttl: Option<u32>) -> Result<(), Box<dyn Error + Send + Sync>>;
-    fn wipe(&mut self) -> Result<(), Box<dyn Error + Send + Sync>>;
-    fn auth(&mut self, token: &str) -> Result<(), Box<dyn Error + Send + Sync>>;
+// `&self`, not `&mut self`: `PaperCacheBackend` (the only real implementor)
+// just delegates to `PaperCache`'s own methods, which are already `&self`
+// and safe to call concurrently from multiple threads (DashMap-backed,
+// `unsafe impl Send + Sync` in paper-cache itself). `&self` here is what
+// lets multiple `BenchmarkClient`s share one backend via `Arc` instead of
+// each getting its own private `PaperCacheBackend`/`PaperCache` instance
+// (previously, `-c N` created N independent caches, each with its own
+// worker threads and independently-enforced `cache_max_size` -- the
+// aggregate memory ceiling was silently `N * cache_max_size`, not
+// `cache_max_size`, which is not what `-c N` is supposed to model).
+// `Sync` (not just `Send`) is required for the same reason: `Arc<dyn
+// CacheBackend>` is only `Send`/`Sync` itself if the trait object is.
+pub trait CacheBackend: Send + Sync {
+    fn ping(&self) -> Result<(), Box<dyn Error + Send + Sync>>;
+    fn get(&self, key: &str) -> Result<Option<Vec<u8>>, Box<dyn Error + Send + Sync>>;
+    fn set(&self, key: String, value: Box<[u8]>, ttl: Option<u32>) -> Result<(), Box<dyn Error + Send + Sync>>;
+    fn wipe(&self) -> Result<(), Box<dyn Error + Send + Sync>>;
+    fn auth(&self, token: &str) -> Result<(), Box<dyn Error + Send + Sync>>;
 }
 
 /// Adapter around your in-process paper_cache library.
@@ -232,12 +244,12 @@ impl PaperCacheBackend {
 
 
 impl CacheBackend for PaperCacheBackend {
-    fn ping(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
+    fn ping(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
         // in-process cache: nothing to ping
         Ok(())
     }
 
-    fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>, Box<dyn Error + Send + Sync>> {
+    fn get(&self, key: &str) -> Result<Option<Vec<u8>>, Box<dyn Error + Send + Sync>> {
         let key_u64 = key.parse::<u64>().map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
 
         match self.inner.get(&key_u64) {
@@ -253,7 +265,7 @@ impl CacheBackend for PaperCacheBackend {
         }
     }
 
-    fn set(&mut self, key: String, value: Box<[u8]>, ttl: Option<u32>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    fn set(&self, key: String, value: Box<[u8]>, ttl: Option<u32>) -> Result<(), Box<dyn Error + Send + Sync>> {
         let key_u64 = key.parse::<u64>().map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
         //let boxed: Box<[u8]> = value.into_boxed_slice();
 
@@ -277,11 +289,11 @@ impl CacheBackend for PaperCacheBackend {
 
     }
 
-    fn wipe(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
+    fn wipe(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
         self.inner.wipe().map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)
     }
 
-    fn auth(&mut self, _token: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+    fn auth(&self, _token: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
         // in-process cache has no auth
         Ok(())
     }

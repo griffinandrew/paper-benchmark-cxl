@@ -201,6 +201,7 @@ use std::{
     fmt::{self, Display},
     time::{Instant, Duration},
     error::Error,
+    sync::Arc,
 };
 
 use clap::ValueEnum;
@@ -215,7 +216,12 @@ use crate::{
 pub type ClientReceiver = Receiver<ClientEvent>;
 
 pub struct BenchmarkClient {
-    client: Box<dyn CacheBackend>,
+    // `Arc`, not `Box`: multiple `BenchmarkClient`s (one per `-c N` client
+    // thread) now share one backend/cache instance, matching what `-c N`
+    // is supposed to model (N concurrent clients against one cache) --
+    // see `CacheBackend`'s own doc comment for why `&self` methods make
+    // this safe.
+    client: Arc<dyn CacheBackend>,
     events: ClientReceiver,
     stats: Stats,
 
@@ -235,7 +241,7 @@ pub enum ClientEvent {
 
 impl BenchmarkClient {
     pub fn new(
-        mut backend: Box<dyn CacheBackend>,
+        backend: Arc<dyn CacheBackend>,
         auth: Option<String>,
         events: ClientReceiver,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {

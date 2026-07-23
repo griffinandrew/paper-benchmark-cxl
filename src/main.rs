@@ -478,6 +478,7 @@ use std::{
     io::{self, Seek, SeekFrom, BufRead, Write},
     path::{Path, PathBuf},
     time::Duration,
+    sync::Arc,
 };
 
 
@@ -655,27 +656,37 @@ fn main() {
     println!("Client type: {}", args.client_type);
     println!("Initializing {} client(s)", args.clients);
 
+    // One shared cache for every client -- `-c N` is meant to model N
+    // concurrent clients against a single cache (matching real deployment
+    // via paper-server), not N independent caches. Building a separate
+    // `PaperCacheBackend` per client (the previous behavior) silently
+    // multiplied the real memory ceiling by N: with `-c 8` and
+    // `--cache-max-size 15G`, the true aggregate ceiling was up to 120G
+    // (8 independent 15G-capable caches), not 15G, which is what caused
+    // real OOM kills under `-c 8` that never happened under `-c 1`. Safe to
+    // share now that `CacheBackend`'s methods take `&self` (PaperCache's
+    // own methods already do, and are designed for concurrent shared use).
+    // `--use-cache` has no real effect either way here (see the comment
+    // below) -- both branches already built the same in-process cache.
+    let backend: Arc<dyn CacheBackend> = if args.use_cache {
+        Arc::new(
+            PaperCacheBackend::new(args.cache_max_size)
+                .expect("Could not create PaperCacheBackend"),
+        )
+    } else {
+        // If someone explicitly disables --use-cache, we still create the in-process cache to avoid networking;
+        // alternatively we could error here. For now: create the in-process cache anyway.
+        Arc::new(
+            PaperCacheBackend::new(args.cache_max_size)
+                .expect("Could not create PaperCacheBackend"),
+        )
+    };
+
     let clients = (0..args.clients)
         .map(|_| {
             let receiver = receiver.clone();
 
-            // Build and supply the backend object:
-            // we use the in-process PaperCache backend and ignore remote server parameters
-            let backend: Box<dyn CacheBackend> = if args.use_cache {
-                Box::new(
-                    PaperCacheBackend::new(args.cache_max_size)
-                        .expect("Could not create PaperCacheBackend"),
-                )
-            } else {
-                // If someone explicitly disables --use-cache, we still create the in-process cache to avoid networking;
-                // alternatively we could error here. For now: create the in-process cache anyway.
-                Box::new(
-                    PaperCacheBackend::new(args.cache_max_size)
-                        .expect("Could not create PaperCacheBackend"),
-                )
-            };
-
-            BenchmarkClient::new(backend, args.auth.clone(), receiver)
+            BenchmarkClient::new(Arc::clone(&backend), args.auth.clone(), receiver)
                 .expect("Could not create client.")
                 .with_client_type(args.client_type)
         })
