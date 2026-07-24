@@ -245,18 +245,38 @@ impl BenchmarkClient {
         auth: Option<String>,
         events: ClientReceiver,
     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        Self::with_expected_accesses(backend, auth, events, 0)
+    }
+
+    /// Same as [`Self::new`], but pre-sizes this client's `Stats` latency
+    /// buffers for `expected_accesses` up front -- see `Stats::with_capacity`
+    /// for why this matters under a strictly NUMA-bound global allocator.
+    /// `0` (what `Self::new` passes) falls back to `Stats::default()`'s
+    /// ordinary grow-as-you-go Vecs.
+    pub fn with_expected_accesses(
+        backend: Arc<dyn CacheBackend>,
+        auth: Option<String>,
+        events: ClientReceiver,
+        expected_accesses: usize,
+    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
         if let Some(token) = &auth {
             backend.auth(token)?;
         }
 
         backend.wipe()?;
 
+        let stats = if expected_accesses > 0 {
+            Stats::with_capacity(expected_accesses)
+        } else {
+            Stats::default()
+        };
+
         Ok(BenchmarkClient {
             client: backend,
             events,
-            stats: Stats::default(),
+            stats,
 
-            client_type: ClientType::Lookaside, //this should be diff i think..... 
+            client_type: ClientType::Lookaside, //this should be diff i think.....
         })
     }
 

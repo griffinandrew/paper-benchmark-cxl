@@ -682,11 +682,34 @@ fn main() {
         )
     };
 
+    // Pre-size each client's `Stats` latency buffers for roughly its share
+    // of the trace, instead of letting them grow via `Vec::push`'s
+    // amortized doubling across the whole run. `reader.size()` is already
+    // read again below to print "Processing N accesses" before the run
+    // starts -- reading it once more here (cheap: `BinaryReader` just
+    // stats/opens the file to get its record count, doesn't read the
+    // records themselves) lets that same number size these buffers up
+    // front, while node 0 is still fresh, rather than paying dozens of
+    // reallocations -- the last and largest of which lands at the worst
+    // possible time, when node 0 is most fragmented -- spread across the
+    // run. See `Stats::with_capacity`'s own doc comment for the full
+    // reasoning and the real allocation-failure abort this fixes.
+    let expected_accesses_per_client: usize = args.trace_path.as_ref()
+        .and_then(|path| BinaryReader::<Access>::from_path(path).ok())
+        .map(|reader| (reader.size() / Access::chunk_size() as u64) as usize)
+        .map(|total| total / args.clients.max(1) as usize)
+        .unwrap_or(0);
+
     let clients = (0..args.clients)
         .map(|_| {
             let receiver = receiver.clone();
 
-            BenchmarkClient::new(Arc::clone(&backend), args.auth.clone(), receiver)
+            BenchmarkClient::with_expected_accesses(
+                Arc::clone(&backend),
+                args.auth.clone(),
+                receiver,
+                expected_accesses_per_client,
+            )
                 .expect("Could not create client.")
                 .with_client_type(args.client_type)
         })

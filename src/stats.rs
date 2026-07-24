@@ -56,6 +56,32 @@ struct PercentileLatency {
 }
 
 impl Stats {
+	/// Pre-sizes `get_latencies`/`set_latencies` instead of letting them
+	/// grow via `Vec::push`'s amortized doubling. Over a full trace run
+	/// (millions of pushes per client), that doubling means dozens of
+	/// progressively larger reallocations spread across the *entire* run,
+	/// each one leaving the previous (smaller) buffer's freed space behind
+	/// -- on a strictly NUMA-bound allocator (see paper-cache's
+	/// `DramMultiArenaObjects`), that accumulates real fragmentation, and
+	/// the *final* reallocation (the single largest one, tens of MB) lands
+	/// exactly when node 0 is most fragmented: at the very end of the run.
+	/// Confirmed directly: this was the actual cause of a real
+	/// `memory allocation of N bytes failed` abort under `-c 8` against
+	/// the full standard_web.bin trace. Pre-sizing once, up front (when
+	/// node 0 is fresh), replaces "many reallocations culminating in one
+	/// large one at the worst possible time" with "one allocation at the
+	/// best possible time." `expected_accesses` doesn't need to be exact
+	/// (the real per-client split isn't perfectly even, and GETs/SETs
+	/// aren't the same count) -- it only needs to be in the right order of
+	/// magnitude to eliminate most of the incremental regrowth.
+	pub fn with_capacity(expected_accesses: usize) -> Self {
+		Stats {
+			get_latencies: Vec::with_capacity(expected_accesses),
+			set_latencies: Vec::with_capacity(expected_accesses),
+			..Default::default()
+		}
+	}
+
 	pub fn store_ping_time(&mut self, instant: Instant) {
 		self.ping_latencies.push((instant, instant.elapsed()));
 	}
