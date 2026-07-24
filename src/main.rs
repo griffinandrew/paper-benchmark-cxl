@@ -694,11 +694,26 @@ fn main() {
     // possible time, when node 0 is most fragmented -- spread across the
     // run. See `Stats::with_capacity`'s own doc comment for the full
     // reasoning and the real allocation-failure abort this fixes.
-    let expected_accesses_per_client: usize = args.trace_path.as_ref()
+    let expected_total_accesses: usize = args.trace_path.as_ref()
         .and_then(|path| BinaryReader::<Access>::from_path(path).ok())
         .map(|reader| (reader.size() / Access::chunk_size() as u64) as usize)
-        .map(|total| total / args.clients.max(1) as usize)
         .unwrap_or(0);
+    let expected_accesses_per_client: usize =
+        expected_total_accesses / args.clients.max(1) as usize;
+
+    // Same reasoning as the per-client buffers above, applied to the final
+    // cross-client accumulator: the post-run merge loop below
+    // (`stats += task.join()...`) used to rebuild `stats`'s Vecs from
+    // scratch on every single client merge, so the *last* merge needed one
+    // huge contiguous allocation sized for the complete combined dataset --
+    // confirmed directly, this crashed a real `-c 4` run against the full
+    // standard_web.bin trace with a single ~224 MB allocation failure right
+    // after the trace itself had already processed cleanly to 100%.
+    // Pre-sizing `stats` for the *whole* trace up front, before the run
+    // even starts (i.e. before node 0 has had a chance to fragment at all),
+    // means that allocation happens here instead, at the best possible
+    // time -- see `Stats::with_capacity`/`AddAssign`'s own doc comments.
+    let mut stats = Stats::with_capacity(expected_total_accesses);
 
     let clients = (0..args.clients)
         .map(|_| {
@@ -784,14 +799,17 @@ fn main() {
 
     //drop(sender);
 
-    let mut stats = Stats::default();
-
     for task in tasks {
         stats += task
             .join()
             .expect("Could not terminate client")
             .expect("Error executing client requests");
     }
+
+    // `AddAssign` no longer sorts on every merge (see its own doc comment)
+    // -- restore chronological order once here, which is all
+    // `save_latency_plot` below actually needs it for.
+    stats.sort_by_time();
 
     stats.print_ping_stats();
     stats.print_get_stats();

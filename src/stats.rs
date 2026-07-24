@@ -82,6 +82,20 @@ impl Stats {
 		}
 	}
 
+	/// Sorts each latency series by timestamp. `AddAssign` no longer sorts
+	/// on every `+=` (see its own doc comment) -- callers merging several
+	/// `Stats` via a `for x in xs { total += x }` loop should call this
+	/// once, after the loop, only if they actually need chronological order
+	/// (currently just `save_latency_plot`'s `get_initial_instant`/
+	/// `get_final_instant`, via `first()`/`last()`); `print_*_stats`/
+	/// `save_latency_percentiles` compute percentiles from values and don't
+	/// care about order.
+	pub fn sort_by_time(&mut self) {
+		self.ping_latencies.sort_unstable_by_key(|(instant, _)| *instant);
+		self.get_latencies.sort_unstable_by_key(|(instant, _)| *instant);
+		self.set_latencies.sort_unstable_by_key(|(instant, _)| *instant);
+	}
+
 	pub fn store_ping_time(&mut self, instant: Instant) {
 		self.ping_latencies.push((instant, instant.elapsed()));
 	}
@@ -343,15 +357,37 @@ impl Stats {
 }
 
 impl AddAssign for Stats {
+	// Extends in place instead of the previous `merge_times` (rebuild a
+	// brand-new Vec from empty, `extend_from_slice(self)` then
+	// `extend_from_slice(rhs)`, re-sorting on every single call): merging N
+	// clients' Stats via a `for task in tasks { stats += ... }` loop called
+	// this once per client, and rebuilding from scratch each time meant the
+	// *entire* running total got copied into a fresh allocation on every
+	// call, not just the new client's data -- and the final call needed one
+	// single contiguous allocation sized for the *complete* combined
+	// dataset (confirmed directly: a real `-c 4` run against the full
+	// standard_web.bin trace processed 100% of the trace cleanly, then
+	// aborted with a single ~224 MB allocation failure right here, in the
+	// post-run merge, on a strictly NUMA-bound allocator already fragmented
+	// by a full run's worth of cache churn). Extending in place still needs
+	// to reallocate when capacity runs out, but only copies what's already
+	// there once per growth step rather than rebuilding from empty every
+	// time -- and callers that pre-size the destination up front (see
+	// `Stats::with_capacity`, used for the final accumulator in `main.rs`)
+	// can avoid that growth entirely. Sorting is deliberately *not* done
+	// here anymore either, for the same reason -- see `Stats::sort_by_time`.
 	fn add_assign(&mut self, rhs: Self) {
-		*self = Stats {
-			ping_latencies: merge_times(&self.ping_latencies, &rhs.ping_latencies),
-			get_latencies: merge_times(&self.get_latencies, &rhs.get_latencies),
-			set_latencies: merge_times(&self.set_latencies, &rhs.set_latencies),
+		self.ping_latencies.reserve(rhs.ping_latencies.len());
+		self.ping_latencies.extend(rhs.ping_latencies);
 
-			get_total_size: self.get_total_size + rhs.get_total_size,
-			set_total_size: self.set_total_size + rhs.set_total_size,
-		}
+		self.get_latencies.reserve(rhs.get_latencies.len());
+		self.get_latencies.extend(rhs.get_latencies);
+
+		self.set_latencies.reserve(rhs.set_latencies.len());
+		self.set_latencies.extend(rhs.set_latencies);
+
+		self.get_total_size += rhs.get_total_size;
+		self.set_total_size += rhs.set_total_size;
 	}
 }
 
@@ -436,16 +472,6 @@ fn print_simple_stats(label: &'static str, data: &LatencyData) {
 	);
 }
 
-fn merge_times(times_a: &[(Instant, Duration)], times_b: &[(Instant, Duration)]) -> Vec<(Instant, Duration)> {
-	let mut times = Vec::<(Instant, Duration)>::new();
-
-	times.extend_from_slice(times_a);
-	times.extend_from_slice(times_b);
-
-	times.sort_unstable_by_key(|(instant, _)| *instant);
-
-	times
-}
 
 
 #[cfg(not(feature = "hot_fix"))] //this is wrong... but want to see if it will run ..... 
