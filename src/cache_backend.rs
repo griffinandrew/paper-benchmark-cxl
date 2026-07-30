@@ -144,7 +144,7 @@ use paper_cache::BufferPMEM;
 #[cfg(feature = "value_dram")]
 use paper_cache::allocator::ValueDRAM;
 
-#[cfg(feature = "hybrid")]
+#[cfg(any(feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_fifo", feature = "hybrid_lru_sized"))]
 use paper_cache::{TieredBuffer, CacheTierSize};
 
 
@@ -178,7 +178,7 @@ pub trait CacheBackend: Send + Sync {
 //this will be all_dram config..... need alternative for pmem//// 
 //#[cfg(not(feature = "allocator_api",feature = "hybrid" ))]
 
-#[cfg(not(any(feature = "allocator_api", feature = "hybrid")))]
+#[cfg(not(any(feature = "allocator_api", feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_fifo", feature = "hybrid_lru_sized")))]
 pub struct PaperCacheBackend {
     inner: PaperCache<u64, Box<[u8]>>,
 }
@@ -193,6 +193,26 @@ pub struct PaperCacheBackend {
     inner: PaperCache<u64,TieredBuffer>,
 }
 
+#[cfg(feature = "hybrid_lfu")]
+pub struct PaperCacheBackend {
+    inner: PaperCache<u64, TieredBuffer>,
+}
+
+#[cfg(feature = "hybrid_2q")]
+pub struct PaperCacheBackend {
+    inner: PaperCache<u64, TieredBuffer>,
+}
+
+#[cfg(feature = "hybrid_fifo")]
+pub struct PaperCacheBackend {
+    inner: PaperCache<u64, TieredBuffer>,
+}
+
+#[cfg(feature = "hybrid_lru_sized")]
+pub struct PaperCacheBackend {
+    inner: PaperCache<u64, TieredBuffer>,
+}
+
 
 /*
 #[cfg(feature = "allocator_api")]
@@ -201,7 +221,7 @@ pub struct PaperCacheBackend {
 }
 */
 
-#[cfg(not(any(feature = "allocator_api", feature = "hybrid")))]
+#[cfg(not(any(feature = "allocator_api", feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_fifo", feature = "hybrid_lru_sized")))]
 impl PaperCacheBackend {
     pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
         // default to a single LRU policy; change if you want CLI policy selection
@@ -230,11 +250,103 @@ impl PaperCacheBackend {
 #[cfg(feature = "hybrid")]
 impl PaperCacheBackend {
     pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // default to a single LRU policy; change if you want CLI policy selection
-        let cache = PaperCache::<u64, TieredBuffer>::new(  
+        // Fast-tier size in GB, overridable via FAST_TIER_GB (defaults to 4,
+        // the prior hardcoded value) so a fast-tier sweep doesn't need a
+        // rebuild per size -- matches hybrid_lfu's pattern below. Parsed as
+        // f64 (not u64) and converted to CacheTierSize::Mb so fractional
+        // values like "2.5" work -- CacheTierSize::Gb only takes a whole
+        // u64, which can't express 2.5 GB directly.
+        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4.0);
+        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
+
+        let cache = PaperCache::<u64, TieredBuffer>::new(
             max_size,
-            //CacheTierSize::Mb(8192),
-            CacheTierSize::Gb(4),
+            CacheTierSize::Mb(fast_tier_mb),
+        )
+        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+        Ok(PaperCacheBackend { inner: cache })
+    }
+}
+
+#[cfg(feature = "hybrid_lfu")]
+impl PaperCacheBackend {
+    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        // Fast-tier size in GB, overridable via FAST_TIER_GB (defaults to 4,
+        // the prior hardcoded value) so a fast-tier sweep doesn't need a
+        // rebuild per size.
+        let fast_tier_gb: u64 = std::env::var("FAST_TIER_GB")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4);
+
+        let cache = PaperCache::<u64, TieredBuffer>::new(
+            max_size,
+            CacheTierSize::Gb(fast_tier_gb),
+        )
+        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+        Ok(PaperCacheBackend { inner: cache })
+    }
+}
+
+#[cfg(feature = "hybrid_2q")]
+impl PaperCacheBackend {
+    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        let fast_tier_gb: u64 = std::env::var("FAST_TIER_GB")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4);
+
+        let cache = PaperCache::<u64, TieredBuffer>::new(
+            max_size,
+            CacheTierSize::Gb(fast_tier_gb),
+            0.1,
+        )
+        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+        Ok(PaperCacheBackend { inner: cache })
+    }
+}
+
+#[cfg(feature = "hybrid_fifo")]
+impl PaperCacheBackend {
+    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        let fast_tier_gb: u64 = std::env::var("FAST_TIER_GB")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4);
+
+        let cache = PaperCache::<u64, TieredBuffer>::new(
+            max_size,
+            CacheTierSize::Gb(fast_tier_gb),
+        )
+        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+        Ok(PaperCacheBackend { inner: cache })
+    }
+}
+
+#[cfg(feature = "hybrid_lru_sized")]
+impl PaperCacheBackend {
+    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        // FAST_TIER_GB is the *total* fast-tier budget (matching every other
+        // hybrid design's env-var sweep convention), split evenly between
+        // the small and large segments. size_threshold is fixed at 16 KiB
+        // (16384 bytes), close to these traces' ~16.1-16.5 KB average
+        // object size, so both segments see genuine traffic rather than one
+        // being empty.
+        let fast_tier_gb: u64 = std::env::var("FAST_TIER_GB")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4);
+
+        let half_mb = (fast_tier_gb * 1000) / 2;
+
+        let cache = PaperCache::<u64, TieredBuffer>::new(
+            max_size,
+            CacheTierSize::Mb(half_mb),
+            CacheTierSize::Mb(half_mb),
+            CacheTierSize::Bytes(16384),
         )
         .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
         Ok(PaperCacheBackend { inner: cache })

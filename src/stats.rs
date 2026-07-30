@@ -405,6 +405,8 @@ fn print_stats(label: &'static str, times: &[(Instant, Duration)]) {
 
 	println!("\n*** {label} stats ***\n");
 
+	println!("{label} count:\t{}", data.len());
+
 	print_dist(&mut data);
 	print_simple_stats(label, &data);
 }
