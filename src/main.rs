@@ -633,15 +633,17 @@ fn main() {
     //let tsc_hz = paper_cache::calibrate_tsc_hz();
     //println!("Starting benchmark...");
 
-    #[cfg(feature = "all_dram")] { 
+    // Prefault disabled: this unconditionally touched 25 GiB up front on every
+    // all_dram-feature run regardless of the actual configured cache size,
+    // which was skewing SET-latency comparisons (allocations were drawing
+    // from an already-resident pool instead of paying real first-touch page
+    // fault cost). No config should be prefaulting.
+    /*
+    #[cfg(feature = "all_dram")] {
         let mut buf = vec![0u8; 25 * 1024 * 1024 * 1024];
-        //println!("Triggering kernel-space prefault into Fast Tier...");
         prefault_fast_tier(&mut buf);
-
-        //println!("25 GB is fully resident in local physical memory. Running workload...");
-
     }
-    //println!("25 GB is fully resident in local physical memory. Running workload...");
+    */
 
 
 

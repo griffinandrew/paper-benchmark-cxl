@@ -224,7 +224,6 @@ pub struct PaperCacheBackend {
 #[cfg(not(any(feature = "allocator_api", feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_fifo", feature = "hybrid_lru_sized")))]
 impl PaperCacheBackend {
     pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // default to a single LRU policy; change if you want CLI policy selection
         let cache = PaperCache::<u64, Box<[u8]>>::new(max_size, &[PaperPolicy::Lru], PaperPolicy::Lru)
             .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
         Ok(PaperCacheBackend { inner: cache })
@@ -236,11 +235,10 @@ impl PaperCacheBackend {
 #[cfg(feature = "allocator_api")]
 impl PaperCacheBackend {
     pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // default to a single LRU policy; change if you want CLI policy selection
         let cache = PaperCache::<u64, BufferPMEM>::new(
             max_size,
-            &[PaperPolicy::Lru],
-            PaperPolicy::Lru,
+            &[PaperPolicy::Lfu],
+            PaperPolicy::Lfu,
         )
         .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
         Ok(PaperCacheBackend { inner: cache })
@@ -276,15 +274,19 @@ impl PaperCacheBackend {
     pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
         // Fast-tier size in GB, overridable via FAST_TIER_GB (defaults to 4,
         // the prior hardcoded value) so a fast-tier sweep doesn't need a
-        // rebuild per size.
-        let fast_tier_gb: u64 = std::env::var("FAST_TIER_GB")
+        // rebuild per size. Parsed as f64 (not u64) and converted to
+        // CacheTierSize::Mb, matching the "hybrid" (LRU) block's approach,
+        // so fractional values like "13.5"/"17.5" work -- CacheTierSize::Gb
+        // only takes a whole u64, which can't express a fractional GB.
+        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(4);
+            .unwrap_or(4.0);
+        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
 
         let cache = PaperCache::<u64, TieredBuffer>::new(
             max_size,
-            CacheTierSize::Gb(fast_tier_gb),
+            CacheTierSize::Mb(fast_tier_mb),
         )
         .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
         Ok(PaperCacheBackend { inner: cache })
