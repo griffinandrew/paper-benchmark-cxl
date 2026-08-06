@@ -144,7 +144,7 @@ use paper_cache::BufferPMEM;
 #[cfg(feature = "value_dram")]
 use paper_cache::allocator::ValueDRAM;
 
-#[cfg(any(feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission"))]
+#[cfg(any(feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint"))]
 use paper_cache::{TieredBuffer, CacheTierSize};
 
 
@@ -178,7 +178,7 @@ pub trait CacheBackend: Send + Sync {
 //this will be all_dram config..... need alternative for pmem//// 
 //#[cfg(not(feature = "allocator_api",feature = "hybrid" ))]
 
-#[cfg(not(any(feature = "allocator_api", feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission")))]
+#[cfg(not(any(feature = "allocator_api", feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint")))]
 pub struct PaperCacheBackend {
     inner: PaperCache<u64, Box<[u8]>>,
 }
@@ -238,6 +238,11 @@ pub struct PaperCacheBackend {
     inner: PaperCache<u64, TieredBuffer>,
 }
 
+#[cfg(feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint")]
+pub struct PaperCacheBackend {
+    inner: PaperCache<u64, TieredBuffer>,
+}
+
 
 /*
 #[cfg(feature = "allocator_api")]
@@ -246,7 +251,7 @@ pub struct PaperCacheBackend {
 }
 */
 
-#[cfg(not(any(feature = "allocator_api", feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission")))]
+#[cfg(not(any(feature = "allocator_api", feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint")))]
 impl PaperCacheBackend {
     pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let cache = PaperCache::<u64, Box<[u8]>>::new(max_size, &[PaperPolicy::Lfu], PaperPolicy::Lfu)
@@ -478,6 +483,31 @@ impl PaperCacheBackend {
         // module doc) -- e.g. at FAST_TIER_GB=6 and a 24GB cache, 10% of
         // 24GB (2.4GB) comes out of the 6GB fast budget, leaving ~3.6GB
         // effective room for the main queue's fast segment.
+        let fast_tier_gb: u64 = std::env::var("FAST_TIER_GB")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4);
+
+        let cache = PaperCache::<u64, TieredBuffer>::new(
+            max_size,
+            CacheTierSize::Gb(fast_tier_gb),
+            0.1,
+        )
+        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+        Ok(PaperCacheBackend { inner: cache })
+    }
+}
+
+#[cfg(feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint")]
+impl PaperCacheBackend {
+    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        // Same FAST_TIER_GB env-var sweep convention and 0.1 ratio as
+        // hybrid_s3_fifo_ghost_lazy_demotion_fast_admission -- kept
+        // identical to the predecessor variant so results are directly
+        // comparable. The only new mechanic this design adds (a mid-slow-
+        // segment reference-bit checkpoint promoting a re-accessed key
+        // early instead of always waiting for the tail) is entirely
+        // internal to the stack and doesn't add a new sizing knob.
         let fast_tier_gb: u64 = std::env::var("FAST_TIER_GB")
             .ok()
             .and_then(|v| v.parse().ok())
