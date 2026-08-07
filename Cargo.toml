@@ -45,6 +45,9 @@ hybrid_s3_fifo_ghost = []
 hybrid_s3_fifo_ghost_lazy_demotion = []
 hybrid_s3_fifo_ghost_lazy_demotion_fast_admission = []
 hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint = []
+hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve = []
+hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve = []
+hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve = []
 
 [dependencies.paper-cache]
 #path = "/home/griff/work/paper-cache-cxl"
@@ -75,7 +78,7 @@ branch = "investigate-key-pmem-value-pmem-set-regression"
 
 #features = ["hashbrown_dram"]
 
-features = ["s3_fifo_ghost_lazy_demotion_fast_admission_midpoint_hybrid_cache"]
+features = ["s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve_hybrid_cache"]
 
 #features = ["global_hashtable_pmem"]
 
