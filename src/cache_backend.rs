@@ -274,7 +274,15 @@ pub struct PaperCacheBackend {
 #[cfg(not(any(feature = "allocator_api", feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve")))]
 impl PaperCacheBackend {
     pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        let cache = PaperCache::<u64, Box<[u8]>>::new(max_size, &[PaperPolicy::Lfu], PaperPolicy::Lfu)
+        // Policy selectable via PAPER_POLICY so this non-hybrid baseline can be
+        // matched to whichever hybrid it is compared against. Defaults to Lfu,
+        // the previous hardcoded value.
+        let policy = match std::env::var("PAPER_POLICY").ok().as_deref() {
+            Some("fifo") => PaperPolicy::Fifo,
+            Some("lru") => PaperPolicy::Lru,
+            _ => PaperPolicy::Lfu,
+        };
+        let cache = PaperCache::<u64, Box<[u8]>>::new(max_size, &[policy], policy)
             .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
         Ok(PaperCacheBackend { inner: cache })
     }

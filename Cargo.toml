@@ -51,9 +51,9 @@ hybrid_s3_fifo_lazy_demotion_reprieve = []
 hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve = []
 
 [dependencies.paper-cache]
-#path = "/home/griff/work/paper-cache-cxl"
+path = "/home/griff/work/paper-cache-cxl"
 
-git = "ssh://git@github.com/griffinandrew/paper-cache-cxl.git"
+#git = "ssh://git@github.com/griffinandrew/paper-cache-cxl.git"
 
 #branch = "libcache8-testing"
 
@@ -61,7 +61,7 @@ git = "ssh://git@github.com/griffinandrew/paper-cache-cxl.git"
 
 #branch = "libcache8-claude"
 #branch = "generics-unification"
-branch = "investigate-key-pmem-value-pmem-set-regression"
+#branch = "investigate-key-pmem-value-pmem-set-regression"
 
 #features=["all_dram"]
 
@@ -78,8 +78,8 @@ branch = "investigate-key-pmem-value-pmem-set-regression"
 #features = ["key_value_pmem"]
 
 #features = ["hashbrown_dram"]
-
-features = ["s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve_hybrid_cache"]
+features = ["all_dram"]
+#features = ["s3_fifo_lazy_demotion_fast_admission_reprieve_hybrid_cache"]
 
 #features = ["global_hashtable_pmem"]
 
