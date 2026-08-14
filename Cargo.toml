@@ -47,6 +47,7 @@ hybrid_s3_fifo_ghost_lazy_demotion_fast_admission = []
 hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint = []
 hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve = []
 hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve = []
+hybrid_s3_fifo_lazy_demotion_reprieve = []
 hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve = []
 
 [dependencies.paper-cache]
