@@ -144,7 +144,7 @@ use paper_cache::BufferPMEM;
 #[cfg(feature = "value_dram")]
 use paper_cache::allocator::ValueDRAM;
 
-#[cfg(any(feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_2q_fast_admission", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve"))]
+#[cfg(any(feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_2q_fast_admission", feature = "hybrid_2q_fast_admission_reprieve", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve"))]
 use paper_cache::{TieredBuffer, CacheTierSize};
 
 
@@ -233,7 +233,7 @@ pub struct HybridStatsSnapshot {
 //this will be all_dram config..... need alternative for pmem//// 
 //#[cfg(not(feature = "allocator_api",feature = "hybrid" ))]
 
-#[cfg(not(any(feature = "allocator_api", feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_2q_fast_admission", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve")))]
+#[cfg(not(any(feature = "allocator_api", feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_2q_fast_admission", feature = "hybrid_2q_fast_admission_reprieve", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve")))]
 pub struct PaperCacheBackend {
     inner: PaperCache<u64, Box<[u8]>>,
 }
@@ -266,6 +266,54 @@ pub struct PaperCacheBackend {
 impl PaperCacheBackend {
     pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
         // Same FAST_TIER_GB convention and 0.1 k_in as `hybrid_2q`, kept
+        // identical so the two are directly comparable -- the whole point of
+        // this design is to isolate the effect of moving the one-access queue
+        // to the fast tier, which only holds if nothing else differs.
+        //
+        // Worth knowing when sweeping, though: unlike `hybrid_2q`, k_in here
+        // is a DRAM reservation carved out of FAST_TIER_GB rather than an
+        // independent PMEM budget. At a 24 GB cache and FAST_TIER_GB=4, k_in
+        // 0.1 reserves 2.4 GB of the 4 GB fast tier for objects with no
+        // demonstrated reuse, leaving 1.6 GB for the main queue. Sweeping
+        // k_in down is likely worthwhile here in a way it is not for
+        // `hybrid_2q`.
+        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4.0);
+
+        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
+
+        let k_in: f64 = std::env::var("TWO_Q_K_IN")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.1);
+
+        let cache = PaperCache::<u64, TieredBuffer>::new(
+            max_size,
+            CacheTierSize::Mb(fast_tier_mb),
+            k_in,
+        )
+        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+        Ok(PaperCacheBackend { inner: cache })
+    }
+}
+
+#[cfg(feature = "hybrid_2q_fast_admission_reprieve")]
+pub struct PaperCacheBackend {
+    inner: PaperCache<u64, TieredBuffer>,
+}
+#[cfg(feature = "hybrid_2q_fast_admission_reprieve")]
+impl PaperCacheBackend {
+    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        // Same knobs as `hybrid_2q_fast_admission`, kept identical so the
+        // two are directly comparable -- this design differs only in what
+        // happens to a one-access key that ages out (reprieved to the slow
+        // tier rather than evicted), so any other difference would confound
+        // the comparison.
+        //
+        // Original note, still applicable: same FAST_TIER_GB convention and
+        // 0.1 k_in as `hybrid_2q`, kept
         // identical so the two are directly comparable -- the whole point of
         // this design is to isolate the effect of moving the one-access queue
         // to the fast tier, which only holds if nothing else differs.
@@ -367,7 +415,7 @@ pub struct PaperCacheBackend {
 }
 */
 
-#[cfg(not(any(feature = "allocator_api", feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_2q_fast_admission", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve")))]
+#[cfg(not(any(feature = "allocator_api", feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_2q_fast_admission", feature = "hybrid_2q_fast_admission_reprieve", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve")))]
 impl PaperCacheBackend {
     pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
         // Policy selectable via PAPER_POLICY so this non-hybrid baseline can be
@@ -930,7 +978,7 @@ impl CacheBackend for PaperCacheBackend {
         // block regardless of which design is active (paper-cache resolves
         // that internally). Adding a new hybrid design to paper-cache only
         // requires adding its feature name to this list and to `Cargo.toml`.
-        #[cfg(any(feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_2q_fast_admission", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve"))]
+        #[cfg(any(feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_2q_fast_admission", feature = "hybrid_2q_fast_admission_reprieve", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve"))]
         let (fast_tier_bytes, hybrid) = {
             let stats = self.inner.hybrid_stats();
 
@@ -962,7 +1010,7 @@ impl CacheBackend for PaperCacheBackend {
             )
         };
 
-        #[cfg(not(any(feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_2q_fast_admission", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve")))]
+        #[cfg(not(any(feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_2q_fast_admission", feature = "hybrid_2q_fast_admission_reprieve", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve")))]
         let (fast_tier_bytes, hybrid) = (None, None);
 
         Some(CacheReport {
