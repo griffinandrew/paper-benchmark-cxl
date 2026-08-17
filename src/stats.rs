@@ -391,6 +391,50 @@ impl AddAssign for Stats {
 	}
 }
 
+/// Scalar per-operation numbers for one run, in the shape a summary CSV row
+/// wants: one value per column rather than the distribution tables
+/// `print_get_stats`/`print_set_stats` render to stdout.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct OpSummary {
+	pub count: u64,
+	pub mean_ns: f64,
+	pub p99_ns: f64,
+	pub total_bytes: u64,
+}
+
+fn summarize(times: &[(Instant, Duration)], total_bytes: u64) -> OpSummary {
+	if times.is_empty() {
+		return OpSummary::default();
+	}
+
+	let latencies = times
+		.iter()
+		.map(|(_, duration)| duration.as_nanos() as f64)
+		.collect::<Vec<_>>();
+
+	let count = latencies.len() as u64;
+	let mean_ns = latencies.iter().sum::<f64>() / count as f64;
+
+	// `Data::quantile` needs `&mut` (it sorts in place), hence the separate
+	// binding rather than chaining off the collect above.
+	let mut data = Data::new(latencies);
+	let p99_ns = data.quantile(0.99);
+
+	OpSummary { count, mean_ns, p99_ns, total_bytes }
+}
+
+impl Stats {
+	/// Same GET numbers `print_get_stats` prints, as scalars.
+	pub fn get_summary(&self) -> OpSummary {
+		summarize(&self.get_latencies, self.get_total_size)
+	}
+
+	/// Same SET numbers `print_set_stats` prints, as scalars.
+	pub fn set_summary(&self) -> OpSummary {
+		summarize(&self.set_latencies, self.set_total_size)
+	}
+}
+
 fn print_stats(label: &'static str, times: &[(Instant, Duration)]) {
 	let latencies = times
 		.iter()

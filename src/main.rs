@@ -460,6 +460,7 @@ mod access;
 mod client;
 mod stats;
 mod cache_backend;
+mod summary;
 
 //use paper_cache::allocator::HybridObjects;
 
@@ -499,6 +500,7 @@ use crate::{
     access::Access,
     stats::Stats,
     cache_backend::{PaperCacheBackend, CacheBackend},
+    summary::RunSummary,
 };
 
 const PING_TEST_COUNT: u64 = 1_000_000;
@@ -533,6 +535,17 @@ struct Args {
 
     #[arg(long)]
     output_plot: Option<PathBuf>,
+
+    /// Appends one row per run — policy, miss ratio, latency headlines, and
+    /// the cache's aggregate promotion/demotion/eviction totals plus live
+    /// tier occupancy — to this CSV, creating it with a header if needed.
+    ///
+    /// Distinct from `--output-csv`, which writes (and truncates) a
+    /// 100-row latency *distribution* for a single run. Point every run of a
+    /// sweep at the same `--summary-csv` to accumulate directly comparable
+    /// rows in one file.
+    #[arg(long)]
+    summary_csv: Option<PathBuf>,
 
     /// Use the in-process paper_cache implementation (default: true)
     #[arg(long, default_value_t = true)]
@@ -816,7 +829,36 @@ fn main() {
     stats.print_ping_stats();
     stats.print_get_stats();
     stats.print_set_stats();
-    //CacheBackend::report_stats_lru(backend).expect("Could not report LRU stats.");
+
+    // Read after every client has joined, so the counters cover the whole
+    // run. The tier gauges (unlike the monotonic promotion/demotion/eviction
+    // totals) are a point-in-time reading republished by paper-cache's
+    // `PolicyWorker` once per event-loop pass, so they may lag the final
+    // access by up to one polling interval and may still show a small
+    // migration backlog as settling.
+    let cache_report = backend.cache_report();
+
+    if let Some(cache_report) = cache_report {
+        let run_summary = RunSummary {
+            trace: args.trace_path.as_ref()
+                .and_then(|path| path.file_name())
+                .and_then(|name| name.to_str())
+                .unwrap_or(""),
+            clients: args.clients,
+            get: stats.get_summary(),
+            set: stats.set_summary(),
+            cache: cache_report,
+        };
+
+        run_summary.print();
+
+        if let Some(path) = &args.summary_csv {
+            run_summary.append_csv(path)
+                .expect("Could not append run summary CSV.");
+
+            println!("\nAppended summary row to <{}>.", path.to_str().unwrap_or(""));
+        }
+    }
 
     if args.output_csv.is_some() || args.output_plot.is_some() {
         println!();
