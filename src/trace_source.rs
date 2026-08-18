@@ -51,6 +51,9 @@
 use std::io::{self, Read, BufReader};
 use std::net::{TcpStream, TcpListener};
 use std::path::PathBuf;
+use std::thread;
+
+use crossbeam_channel::{bounded, Receiver};
 
 use kwik::file::{
     FileReader,
@@ -62,6 +65,16 @@ use crate::access::Access;
 /// Bytes buffered ahead of the decoder. Large enough that a socket read
 /// amortizes over ~2600 records rather than costing a syscall each.
 const STREAM_BUFFER_BYTES: usize = 256 * 1024;
+
+/// Records held in flight between the network reader thread and the replay
+/// loop. At the measured consumption rate (~58K records/sec on this box) this
+/// is roughly 4 seconds of buffer, which is what absorbs a network stall
+/// without the replay loop ever noticing.
+///
+/// Sized in records rather than bytes because that is the unit that matters:
+/// what must not happen is the feed loop running dry. 256K records is ~6 MB
+/// of `Access` structs, negligible next to a multi-GB cache.
+const PREFETCH_RECORDS: usize = 256 * 1024;
 
 /// CRC-32 (IEEE, the zlib/gzip polynomial) over every trace byte received.
 ///
@@ -164,23 +177,29 @@ impl TraceSource {
                 (Box::new(reader.into_iter()), Some(count))
             },
 
+            // Both streaming variants below hand their decoder to
+            // `prefetch`, which moves the blocking socket/pipe read onto its
+            // own thread. Without it the read sits on the same thread as the
+            // replay loop, so every network stall -- a retransmit, a
+            // scheduling delay on the sender, a momentary bandwidth dip --
+            // propagates straight into the client feed and pauses the
+            // benchmark. That is not a throughput problem (the wire needs
+            // only ~1.4 MB/s) but a jitter one, and jitter demonstrably
+            // moves the measured miss ratio on this crate: a co-located
+            // producer competing for CPU shifted uniform_baseline from
+            // ~0.558 to ~0.60-0.64 purely by changing how evenly accesses
+            // arrived. A file source needs none of this -- page-cache reads
+            // do not stall in the same way -- so it is left alone.
             TraceSource::Stdin => (
-                // `.lock()` matters for more than tidiness. Bare `io::stdin()`
-                // takes a global mutex on *every* read and carries its own
-                // 8 KB buffer beneath ours, so the record stream arrives
-                // slower and burstier than the same bytes over a socket.
-                // That is not merely a throughput detail: the `PolicyWorker`
-                // is asynchronous, so changing how fast accesses arrive
-                // changes how much demotion/eviction work it completes per
-                // access, which changes which objects are resident, which
-                // moves the measured miss ratio. Measured on
-                // uniform_baseline at an 8 GB cache: unlocked stdin gave
-                // 0.602-0.611 where the same trace from a file or a TCP
-                // socket gave 0.558-0.563. Locking once and buffering
-                // ourselves brings stdin back in line.
-                Box::new(ChunkIter::new(BufReader::with_capacity(
+                // Unlocked `io::stdin()` rather than `.lock()`: `StdinLock`
+                // is not `Send`, so it cannot move to the prefetch thread.
+                // The per-read mutex it avoids was measured to make no
+                // difference anyway (locking stdin left uniform_baseline at
+                // 0.601-0.602, unchanged), and with the read now on its own
+                // thread that cost is off the replay path entirely.
+                prefetch(ChunkIter::new(BufReader::with_capacity(
                     STREAM_BUFFER_BYTES,
-                    io::stdin().lock(),
+                    io::stdin(),
                 ))),
                 records,
             ),
@@ -192,7 +211,7 @@ impl TraceSource {
                 // stalling at the end of the trace.
                 let _ = stream.set_nodelay(true);
                 (
-                    Box::new(ChunkIter::new(BufReader::with_capacity(
+                    prefetch(ChunkIter::new(BufReader::with_capacity(
                         STREAM_BUFFER_BYTES,
                         stream,
                     ))),
@@ -209,7 +228,7 @@ impl TraceSource {
                 println!("Trace sender connected from {peer}");
 
                 (
-                    Box::new(ChunkIter::new(BufReader::with_capacity(
+                    prefetch(ChunkIter::new(BufReader::with_capacity(
                         STREAM_BUFFER_BYTES,
                         stream,
                     ))),
@@ -344,4 +363,34 @@ impl<R: Read> ChunkIter<R> {
             self.crc.finish(),
         );
     }
+}
+
+/// Moves a blocking record decoder onto its own thread, handing records to
+/// the caller through a bounded channel.
+///
+/// The channel bound is what makes this safe in both directions: the reader
+/// thread blocks once `PREFETCH_RECORDS` are queued, so a fast link cannot
+/// run ahead into unbounded memory (that backpressure reaches the sender as
+/// TCP flow control), while the replay loop keeps draining a full queue
+/// through any stall shorter than the buffer depth.
+///
+/// The thread is detached. When the replay loop stops early -- `--trace-limit`
+/// -- the receiver drops, the channel disconnects, and the reader's next send
+/// fails and ends the thread.
+fn prefetch<I>(iter: I) -> Box<dyn Iterator<Item = Access>>
+where
+    I: Iterator<Item = Access> + Send + 'static,
+{
+    let (tx, rx): (_, Receiver<Access>) = bounded(PREFETCH_RECORDS);
+
+    thread::spawn(move || {
+        for access in iter {
+            if tx.send(access).is_err() {
+                // Replay loop went away (e.g. --trace-limit reached).
+                break;
+            }
+        }
+    });
+
+    Box::new(rx.into_iter())
 }
