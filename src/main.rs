@@ -461,6 +461,7 @@ mod client;
 mod stats;
 mod cache_backend;
 mod summary;
+mod trace_source;
 
 //use paper_cache::allocator::HybridObjects;
 
@@ -501,6 +502,7 @@ use crate::{
     stats::Stats,
     cache_backend::{PaperCacheBackend, CacheBackend},
     summary::RunSummary,
+    trace_source::TraceSource,
 };
 
 const PING_TEST_COUNT: u64 = 1_000_000;
@@ -557,6 +559,49 @@ struct Args {
     #[arg(long, default_value_t = 25_769_803_776u64)]
     //#[arg(long, default_value_t = 34_359_738_368u64)]
     cache_max_size: u64,
+
+    /// Read the trace from stdin instead of a file, for traces too large to
+    /// store locally. A record is 25 bytes and the object values are
+    /// synthesized locally, so the stream is only ~3 MB/s at this
+    /// benchmark's real throughput:
+    ///
+    ///   ssh host 'cat /traces/cluster12.bin' | paper-benchmark --trace-stdin ...
+    ///
+    /// Pass `--trace-records` alongside it; see that flag for why.
+    #[arg(long, conflicts_with_all = ["trace_path", "trace_stream"])]
+    trace_stdin: bool,
+
+    /// Read the trace from a TCP sender at HOST:PORT, e.g. a remote
+    /// `nc -l -p 9999 < trace.bin`. Prefer `--trace-stdin` over ssh unless
+    /// you specifically want a raw socket: ssh gives you auth and transport
+    /// for free.
+    #[arg(long, value_name = "HOST:PORT", conflicts_with_all = ["trace_path", "trace_stdin"])]
+    trace_stream: Option<String>,
+
+    /// Bind ADDR:PORT and wait for the machine holding the trace to connect
+    /// and push it. Usually easier than --trace-stream: only this side needs
+    /// an open port.
+    ///
+    ///   here:   paper-benchmark --trace-listen 0.0.0.0:9999 --trace-records N ...
+    ///   sender: cat /traces/cluster12.bin | nc benchmark-host 9999
+    #[arg(long, value_name = "ADDR:PORT", conflicts_with_all = ["trace_path", "trace_stdin", "trace_stream"])]
+    trace_listen: Option<String>,
+
+    /// Number of records in a streamed trace (file size / 25).
+    ///
+    /// A stream has no length, so without this the progress bar has no total
+    /// or ETA and — more importantly — `Stats`' latency buffers cannot be
+    /// pre-sized and instead grow by repeated doubling. That has already
+    /// caused a real allocation-failure abort at `-c 4` on a full trace, so
+    /// pass it whenever you know the count.
+    #[arg(long, value_name = "N")]
+    trace_records: Option<u64>,
+
+    /// Stop after this many records. Useful for sampling the head of a huge
+    /// streamed trace without replaying all of it — cluster12 is 2.65B
+    /// records, roughly 6 hours at this benchmark's throughput.
+    #[arg(long, value_name = "N")]
+    trace_limit: Option<u64>,
 }
 
 
@@ -697,6 +742,32 @@ fn main() {
         )
     };
 
+    // Exactly one of --trace-path / --trace-stdin / --trace-stream selects
+    // where accesses come from; clap's `conflicts_with_all` rejects more
+    // than one. `None` means the ping-only mode further below.
+    let trace_source: Option<TraceSource> = if args.trace_stdin {
+        Some(TraceSource::Stdin)
+    } else if let Some(addr) = args.trace_stream.clone() {
+        Some(TraceSource::Tcp(addr))
+    } else if let Some(addr) = args.trace_listen.clone() {
+        Some(TraceSource::Listen(addr))
+    } else {
+        args.trace_path.clone().map(TraceSource::Path)
+    };
+
+    // Rejected up front rather than failing partway in: computing the trace
+    // timespan seeks to the last record, which a socket or pipe cannot do.
+    if args.native_time {
+        if let Some(src) = &trace_source {
+            assert!(
+                src.is_seekable(),
+                "--native-time needs to seek to the trace's last record, which \
+                 a streamed trace cannot do; use --trace-path, or drop \
+                 --native-time to replay as fast as the cache allows",
+            );
+        }
+    }
+
     // Pre-size each client's `Stats` latency buffers for roughly its share
     // of the trace, instead of letting them grow via `Vec::push`'s
     // amortized doubling across the whole run. `reader.size()` is already
@@ -709,10 +780,24 @@ fn main() {
     // possible time, when node 0 is most fragmented -- spread across the
     // run. See `Stats::with_capacity`'s own doc comment for the full
     // reasoning and the real allocation-failure abort this fixes.
-    let expected_total_accesses: usize = args.trace_path.as_ref()
-        .and_then(|path| BinaryReader::<Access>::from_path(path).ok())
-        .map(|reader| (reader.size() / Access::chunk_size() as u64) as usize)
-        .unwrap_or(0);
+    // A file knows its own length; a stream does not, so `--trace-records`
+    // stands in. Both are then capped by `--trace-limit`. Zero means "no
+    // idea", and the buffers fall back to growth-by-doubling.
+    let expected_total_accesses: usize = match &trace_source {
+        Some(TraceSource::Path(path)) => BinaryReader::<Access>::from_path(path)
+            .ok()
+            .map(|reader| reader.size() / Access::chunk_size() as u64)
+            .unwrap_or(0) as usize,
+        Some(_) => args.trace_records.unwrap_or(0) as usize,
+        None => 0,
+    };
+    let expected_total_accesses = match args.trace_limit {
+        Some(limit) if expected_total_accesses > 0 => {
+            expected_total_accesses.min(limit as usize)
+        },
+        Some(limit) => limit as usize,
+        None => expected_total_accesses,
+    };
     let expected_accesses_per_client: usize =
         expected_total_accesses / args.clients.max(1) as usize;
 
@@ -752,7 +837,7 @@ fn main() {
         .map(|mut client| thread::spawn(move || client.run()))
         .collect::<Vec<_>>();
 
-    if args.trace_path.is_none() {
+    if trace_source.is_none() {
         println!("\nPerforming {} pings", fmt::number(PING_TEST_COUNT));
 
         let mut progress = Progress::new(PING_TEST_COUNT)
@@ -768,8 +853,12 @@ fn main() {
         }
     }
 
-    if let Some(trace_path) = &args.trace_path {
+    if let Some(source) = &trace_source {
         if args.native_time {
+            // Guarded above: only a file source reaches here.
+            let trace_path = args.trace_path.as_ref()
+                .expect("--native-time requires --trace-path");
+
             let timespan = get_trace_timespan(trace_path)
                 .expect("Invalid trace path.");
 
@@ -777,19 +866,37 @@ fn main() {
             println!("Total trace timestamp: {}", fmt::timespan(timespan));
         }
 
-        let reader = BinaryReader::<Access>::from_path(trace_path)
-            .expect("Invalid trace path.");
+        let (accesses, known_records) = source
+            .open(args.trace_records, args.trace_limit)
+            .unwrap_or_else(|err| panic!("Could not open trace source ({}): {err}", source.describe()));
 
-        println!("\nProcessing {} accesses", fmt::number(reader.size() / Access::chunk_size() as u64));
+        match known_records {
+            Some(count) => println!("\nProcessing {} accesses from {}",
+                fmt::number(count), source.describe()),
+            // Deliberately explicit rather than printing a made-up total: an
+            // unknown length means no ETA, and saying so beats a progress bar
+            // that silently never reaches 100%.
+            None => println!("\nProcessing accesses from {} (length unknown -- pass \
+                --trace-records for progress and ETA)", source.describe()),
+        }
 
-        let mut progress = Progress::new(reader.size())
+        // Progress is counted in bytes, matching the original file reader's
+        // `tick(chunk_size())`, so the total is the record count scaled up.
+        // With no count, 0 leaves throughput and elapsed time but no
+        // percentage.
+        let progress_total = known_records
+            .map(|count| count * Access::chunk_size() as u64)
+            .unwrap_or(0);
+
+        let mut progress = Progress::new(progress_total)
             .with_tag(Tag::Tps)
             .with_tag(Tag::Eta)
             .with_tag(Tag::Time);
 
         let mut prev_access_timestamp: Option<u64> = None;
+        let mut replayed: u64 = 0;
 
-        for mut access in reader {
+        for mut access in accesses {
             if args.native_time {
                 let prev_timestamp = prev_access_timestamp.unwrap_or(access.timestamp);
 
@@ -808,7 +915,22 @@ fn main() {
             sender.send(ClientEvent::Access(access))
                 .expect("Could not send access to client.");
 
+            replayed += 1;
             progress.tick(Access::chunk_size());
+        }
+
+        // A stream can end early -- sender killed, link dropped, trace
+        // truncated -- and unlike a short file that is invisible otherwise,
+        // since there is no length to check at open time. Report it rather
+        // than letting a partial run read as a complete one.
+        match known_records {
+            Some(expected) if replayed < expected => eprintln!(
+                "\nWARNING: trace ended early -- replayed {} of {} expected records ({:.1}%). \
+                 Results below cover only that prefix.",
+                fmt::number(replayed), fmt::number(expected),
+                100.0 * replayed as f64 / expected as f64,
+            ),
+            _ => println!("\nReplayed {} accesses", fmt::number(replayed)),
         }
     }
 
