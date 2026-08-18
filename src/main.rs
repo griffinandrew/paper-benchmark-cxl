@@ -587,13 +587,16 @@ struct Args {
     #[arg(long, value_name = "ADDR:PORT", conflicts_with_all = ["trace_path", "trace_stdin", "trace_stream"])]
     trace_listen: Option<String>,
 
-    /// Number of records in a streamed trace (file size / 25).
+    /// Optional: number of records in a streamed trace (file size / 25).
     ///
-    /// A stream has no length, so without this the progress bar has no total
-    /// or ETA and — more importantly — `Stats`' latency buffers cannot be
-    /// pre-sized and instead grow by repeated doubling. That has already
-    /// caused a real allocation-failure abort at `-c 4` on a full trace, so
-    /// pass it whenever you know the count.
+    /// Purely cosmetic plus a safety check — it gives the progress bar a
+    /// total and an ETA, and lets the run warn if the stream ends early.
+    /// Omit it and everything still works; you just get throughput and
+    /// elapsed time without a percentage.
+    ///
+    /// It does NOT need to be exact, and it is not needed for correctness or
+    /// performance: latency-buffer pre-sizing is capped internally, so a
+    /// huge value cannot cause a huge allocation.
     #[arg(long, value_name = "N")]
     trace_records: Option<u64>,
 
@@ -602,6 +605,24 @@ struct Args {
     /// records, roughly 6 hours at this benchmark's throughput.
     #[arg(long, value_name = "N")]
     trace_limit: Option<u64>,
+
+    /// Cap retained latency samples per operation type. 0 (the default)
+    /// keeps every sample, which is exact and is what you want unless you
+    /// run out of memory.
+    ///
+    /// Each retained sample is 32 bytes, held once per client and again in
+    /// the merged result, so a billion-record trace can want tens of GB just
+    /// for latency data. Setting a cap switches to reservoir sampling: an
+    /// unbiased sample of the WHOLE run, not just its start.
+    ///
+    /// Exact regardless of this setting: operation counts, byte totals, miss
+    /// ratio, and every tier statistic. Sampled: mean and percentiles. Mean
+    /// and p50-p99 stay accurate at any sane cap; the far tail (p9999,
+    /// p99999, and especially p100/max) degrades, because those depend on
+    /// rare samples the reservoir may not retain. Do not cap if the maximum
+    /// latency is the number you care about.
+    #[arg(long, value_name = "N", default_value_t = 0)]
+    max_latency_samples: usize,
 }
 
 
@@ -798,6 +819,23 @@ fn main() {
         Some(limit) => limit as usize,
         None => expected_total_accesses,
     };
+
+    // Capped, because pre-sizing is an optimization and must never become a
+    // failure mode. `Stats::with_capacity` reserves the record count in
+    // *both* `get_latencies` and `set_latencies`, and `(Instant, Duration)`
+    // is 32 bytes -- so an honest count from a big trace asks for an absurd
+    // allocation up front: cluster31 (1.34B records) wants 85.8 GB and
+    // cluster12 (2.65B) wants 169.6 GB, per `Stats` instance, and there is
+    // one of those per client plus the merged accumulator. That aborts
+    // immediately rather than helping.
+    //
+    // The cap keeps the benefit where it exists -- the reallocation storm
+    // this was added to avoid happens in the first few million pushes -- and
+    // simply stops reserving beyond a point where reserving is absurd.
+    // Past the cap the Vec still grows by doubling, which is what it did
+    // before any of this existed.
+    const MAX_PRESIZED_ACCESSES: usize = 8_000_000; // 256 MB per latency Vec
+    let expected_total_accesses = expected_total_accesses.min(MAX_PRESIZED_ACCESSES);
     let expected_accesses_per_client: usize =
         expected_total_accesses / args.clients.max(1) as usize;
 
@@ -813,7 +851,8 @@ fn main() {
     // even starts (i.e. before node 0 has had a chance to fragment at all),
     // means that allocation happens here instead, at the best possible
     // time -- see `Stats::with_capacity`/`AddAssign`'s own doc comments.
-    let mut stats = Stats::with_capacity(expected_total_accesses);
+    let mut stats = Stats::with_capacity(expected_total_accesses)
+        .with_max_samples(args.max_latency_samples);
 
     let clients = (0..args.clients)
         .map(|_| {
@@ -827,6 +866,7 @@ fn main() {
             )
                 .expect("Could not create client.")
                 .with_client_type(args.client_type)
+                .with_max_latency_samples(args.max_latency_samples)
         })
         .collect::<Vec<BenchmarkClient>>();
 
@@ -884,14 +924,19 @@ fn main() {
         // `tick(chunk_size())`, so the total is the record count scaled up.
         // With no count, 0 leaves throughput and elapsed time but no
         // percentage.
-        let progress_total = known_records
-            .map(|count| count * Access::chunk_size() as u64)
-            .unwrap_or(0);
+        // `Progress::new` asserts a non-zero total, so an unknown-length
+        // stream cannot use it at all -- printing a periodic line instead of
+        // inventing a fake total, which would show a percentage that is
+        // simply wrong.
+        let mut progress = known_records.map(|count| {
+            Progress::new(count * Access::chunk_size() as u64)
+                .with_tag(Tag::Tps)
+                .with_tag(Tag::Eta)
+                .with_tag(Tag::Time)
+        });
 
-        let mut progress = Progress::new(progress_total)
-            .with_tag(Tag::Tps)
-            .with_tag(Tag::Eta)
-            .with_tag(Tag::Time);
+        let started = std::time::Instant::now();
+        const UNKNOWN_LENGTH_REPORT_EVERY: u64 = 1_000_000;
 
         let mut prev_access_timestamp: Option<u64> = None;
         let mut replayed: u64 = 0;
@@ -916,7 +961,17 @@ fn main() {
                 .expect("Could not send access to client.");
 
             replayed += 1;
-            progress.tick(Access::chunk_size());
+
+            match progress.as_mut() {
+                Some(progress) => progress.tick(Access::chunk_size()),
+                None => if replayed % UNKNOWN_LENGTH_REPORT_EVERY == 0 {
+                    let secs = started.elapsed().as_secs_f64();
+                    println!(
+                        "  {} accesses in {:.0}s ({:.0}/sec)",
+                        fmt::number(replayed), secs, replayed as f64 / secs,
+                    );
+                },
+            }
         }
 
         // A stream can end early -- sender killed, link dropped, trace

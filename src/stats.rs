@@ -37,6 +37,12 @@ use kwik::{
 
 type LatencyData = Data<Vec<f64>>;
 
+/// Which latency series a sample belongs to. Exists only so the reservoir
+/// helpers can address one of the three vectors without three near-identical
+/// copies of the same logic.
+#[derive(Clone, Copy)]
+enum SampleTarget { Ping, Get, Set }
+
 #[derive(Debug, Default, Clone)]
 pub struct Stats {
 	ping_latencies: Vec<(Instant, Duration)>,
@@ -45,6 +51,33 @@ pub struct Stats {
 
 	get_total_size: u64,
 	set_total_size: u64,
+
+	/// Cap on retained latency samples per operation type. `0` means
+	/// unbounded, which is the historical behavior and stays the default so
+	/// nothing changes for traces small enough not to care.
+	///
+	/// Retaining one sample per operation costs 32 bytes
+	/// (`size_of::<(Instant, Duration)>()`), which is fine for a 14M-record
+	/// trace and impossible for a billion-record one: cluster12's 534M GETs
+	/// and ~378M SETs alone would be ~29 GB of samples, held per client
+	/// *and* again in the merged accumulator. Capping trades exact retention
+	/// for a bounded footprint; see `store_get_time` for how the sample stays
+	/// representative of the whole run rather than just its beginning.
+	max_samples: usize,
+
+	/// True operation counts, tracked independently of how many samples are
+	/// retained. Reported counts must stay exact even when sampling is on --
+	/// `get_count`/`set_count` feed the results CSV, and quietly reporting a
+	/// sample count there would corrupt every downstream comparison.
+	get_seen: u64,
+	set_seen: u64,
+	ping_seen: u64,
+
+	/// xorshift64* state for reservoir replacement. Deliberately a local
+	/// PRNG rather than a new dependency: the only requirement is that
+	/// replacement positions are uniform, and seeding it identically per run
+	/// keeps sampling reproducible.
+	rng: u64,
 }
 
 struct PercentileLatency {
@@ -96,20 +129,109 @@ impl Stats {
 		self.set_latencies.sort_unstable_by_key(|(instant, _)| *instant);
 	}
 
+	/// Sets the per-operation retained-sample cap. `0` disables capping.
+	pub fn with_max_samples(mut self, max_samples: usize) -> Self {
+		self.max_samples = max_samples;
+		self
+	}
+
+	fn next_rand(&mut self) -> u64 {
+		// xorshift64*
+		let mut x = if self.rng == 0 { 0x9E37_79B9_7F4A_7C15 } else { self.rng };
+		x ^= x >> 12;
+		x ^= x << 25;
+		x ^= x >> 27;
+		self.rng = x;
+		x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+	}
+
+	/// Records one sample into a reservoir.
+	///
+	/// Algorithm R: keep everything until the cap, then admit the nth sample
+	/// with probability `cap/n`, replacing a uniformly chosen resident. That
+	/// is what keeps the retained set a uniform sample of the *entire* run
+	/// rather than just its first `cap` operations -- which matters here,
+	/// because a cache's early latencies are its cold-start behavior and are
+	/// exactly the least representative part of a long trace.
+	fn record(&mut self, sample: (Instant, Duration), seen: u64, target: SampleTarget) {
+		let cap = self.max_samples;
+		let vec = match target {
+			SampleTarget::Ping => &mut self.ping_latencies,
+			SampleTarget::Get => &mut self.get_latencies,
+			SampleTarget::Set => &mut self.set_latencies,
+		};
+
+		if cap == 0 || vec.len() < cap {
+			vec.push(sample);
+			return;
+		}
+
+		let r = {
+			// Borrow dance: `next_rand` needs `&mut self`, so the index is
+			// drawn before re-borrowing the vector.
+			let x = self.next_rand();
+			x % seen
+		};
+
+		if (r as usize) < cap {
+			let vec = match target {
+				SampleTarget::Ping => &mut self.ping_latencies,
+				SampleTarget::Get => &mut self.get_latencies,
+				SampleTarget::Set => &mut self.set_latencies,
+			};
+			vec[r as usize] = sample;
+		}
+	}
+
 	pub fn store_ping_time(&mut self, instant: Instant) {
-		self.ping_latencies.push((instant, instant.elapsed()));
+		self.ping_seen += 1;
+		let seen = self.ping_seen;
+		self.record((instant, instant.elapsed()), seen, SampleTarget::Ping);
 	}
 
 	pub fn store_get_time(&mut self, instant: Instant) {
-		self.get_latencies.push((instant, instant.elapsed()));
+		self.get_seen += 1;
+		let seen = self.get_seen;
+		self.record((instant, instant.elapsed()), seen, SampleTarget::Get);
 	}
 
 	pub fn store_get_size(&mut self, size: u64) {
 		self.get_total_size += size;
 	}
 
+	/// Uniformly reduces one sample set to `cap` entries, by repeatedly
+	/// swapping a randomly chosen survivor into the tail and truncating --
+	/// a partial Fisher-Yates, so every retained sample had equal chance of
+	/// selection.
+	fn trim_to(&mut self, cap: usize, target: SampleTarget) {
+		loop {
+			let len = match target {
+				SampleTarget::Ping => self.ping_latencies.len(),
+				SampleTarget::Get => self.get_latencies.len(),
+				SampleTarget::Set => self.set_latencies.len(),
+			};
+
+			if len <= cap {
+				return;
+			}
+
+			let keep = (self.next_rand() % len as u64) as usize;
+
+			let vec = match target {
+				SampleTarget::Ping => &mut self.ping_latencies,
+				SampleTarget::Get => &mut self.get_latencies,
+				SampleTarget::Set => &mut self.set_latencies,
+			};
+
+			vec.swap(keep, len - 1);
+			vec.truncate(len - 1);
+		}
+	}
+
 	pub fn store_set_time(&mut self, instant: Instant) {
-		self.set_latencies.push((instant, instant.elapsed()));
+		self.set_seen += 1;
+		let seen = self.set_seen;
+		self.record((instant, instant.elapsed()), seen, SampleTarget::Set);
 	}
 
 	pub fn store_set_size(&mut self, size: u64) {
@@ -117,17 +239,21 @@ impl Stats {
 	}
 
 	pub fn print_ping_stats(&self) {
-		print_stats("PING", &self.ping_latencies);
+		print_stats("PING", &self.ping_latencies, self.ping_seen);
 	}
 
 	pub fn print_get_stats(&self) {
-		print_stats("GET", &self.get_latencies);
+		print_stats("GET", &self.get_latencies, self.get_seen);
 
 		if self.get_latencies.is_empty() {
 			return;
 		}
 
-		let avg_size = (self.get_total_size as f64 / self.get_latencies.len() as f64) as u64;
+		// Divided by the true operation count, not the retained-sample
+		// count: `get_total_size` accumulates over every operation, so
+		// pairing it with a sample count would inflate the average by
+		// exactly the sampling ratio.
+		let avg_size = (self.get_total_size as f64 / self.get_seen.max(1) as f64) as u64;
 
 		println!(
 			"Avg GET size:\t{} ({} B)",
@@ -135,11 +261,12 @@ impl Stats {
 			fmt::number(avg_size),
 		);
 
-		let total_time = self.get_latencies
-			.iter()
-			.map(|(_, duration)| duration)
-			.sum::<Duration>();
-
+		// Estimated from the sample's mean latency scaled to the true
+		// operation count, rather than summing the retained samples
+		// directly -- summing a 1-in-100 sample and dividing the *full*
+		// byte total by it would report 100x the real bandwidth. With
+		// sampling off these are identical.
+		let total_time = estimated_total_time(&self.get_latencies, self.get_seen);
 		let bandwidth = self.get_total_size as f64 / total_time.as_secs_f64();
 
 		println!(
@@ -150,13 +277,13 @@ impl Stats {
 	}
 
 	pub fn print_set_stats(&self) {
-		print_stats("SET", &self.set_latencies);
+		print_stats("SET", &self.set_latencies, self.set_seen);
 
 		if self.set_latencies.is_empty() {
 			return;
 		}
 
-		let avg_size = (self.set_total_size as f64 / self.set_latencies.len() as f64) as u64;
+		let avg_size = (self.set_total_size as f64 / self.set_seen.max(1) as f64) as u64;
 
 		println!(
 			"Avg SET size:\t{} ({} B)",
@@ -164,11 +291,7 @@ impl Stats {
 			fmt::number(avg_size),
 		);
 
-		let total_time = self.set_latencies
-			.iter()
-			.map(|(_, duration)| duration)
-			.sum::<Duration>();
-
+		let total_time = estimated_total_time(&self.set_latencies, self.set_seen);
 		let bandwidth = self.set_total_size as f64 / total_time.as_secs_f64();
 
 		println!(
@@ -377,6 +500,16 @@ impl AddAssign for Stats {
 	// can avoid that growth entirely. Sorting is deliberately *not* done
 	// here anymore either, for the same reason -- see `Stats::sort_by_time`.
 	fn add_assign(&mut self, rhs: Self) {
+		// True counts always add, independently of how many samples each
+		// side retained.
+		self.ping_seen += rhs.ping_seen;
+		self.get_seen += rhs.get_seen;
+		self.set_seen += rhs.set_seen;
+
+		if self.max_samples == 0 {
+			self.max_samples = rhs.max_samples;
+		}
+
 		self.ping_latencies.reserve(rhs.ping_latencies.len());
 		self.ping_latencies.extend(rhs.ping_latencies);
 
@@ -388,6 +521,16 @@ impl AddAssign for Stats {
 
 		self.get_total_size += rhs.get_total_size;
 		self.set_total_size += rhs.set_total_size;
+
+		// Merging two reservoirs can overshoot the cap; trim uniformly at
+		// random so the merged set stays a uniform sample rather than
+		// favouring whichever client merged first.
+		if self.max_samples > 0 {
+			let cap = self.max_samples;
+			self.trim_to(cap, SampleTarget::Ping);
+			self.trim_to(cap, SampleTarget::Get);
+			self.trim_to(cap, SampleTarget::Set);
+		}
 	}
 }
 
@@ -402,7 +545,10 @@ pub struct OpSummary {
 	pub total_bytes: u64,
 }
 
-fn summarize(times: &[(Instant, Duration)], total_bytes: u64) -> OpSummary {
+/// `true_count` is the real number of operations; `times` may be a bounded
+/// sample of them. Latency statistics come from the sample, the reported
+/// count never does -- see `Stats::max_samples`.
+fn summarize(times: &[(Instant, Duration)], total_bytes: u64, true_count: u64) -> OpSummary {
 	if times.is_empty() {
 		return OpSummary::default();
 	}
@@ -412,8 +558,8 @@ fn summarize(times: &[(Instant, Duration)], total_bytes: u64) -> OpSummary {
 		.map(|(_, duration)| duration.as_nanos() as f64)
 		.collect::<Vec<_>>();
 
-	let count = latencies.len() as u64;
-	let mean_ns = latencies.iter().sum::<f64>() / count as f64;
+	let count = true_count;
+	let mean_ns = latencies.iter().sum::<f64>() / latencies.len() as f64;
 
 	// `Data::quantile` needs `&mut` (it sorts in place), hence the separate
 	// binding rather than chaining off the collect above.
@@ -426,16 +572,28 @@ fn summarize(times: &[(Instant, Duration)], total_bytes: u64) -> OpSummary {
 impl Stats {
 	/// Same GET numbers `print_get_stats` prints, as scalars.
 	pub fn get_summary(&self) -> OpSummary {
-		summarize(&self.get_latencies, self.get_total_size)
+		summarize(&self.get_latencies, self.get_total_size, self.get_seen)
 	}
 
 	/// Same SET numbers `print_set_stats` prints, as scalars.
 	pub fn set_summary(&self) -> OpSummary {
-		summarize(&self.set_latencies, self.set_total_size)
+		summarize(&self.set_latencies, self.set_total_size, self.set_seen)
 	}
 }
 
-fn print_stats(label: &'static str, times: &[(Instant, Duration)]) {
+/// Total wall time across all operations, estimated from a possibly-sampled
+/// latency set. Exact when sampling is off (the sample *is* every operation).
+fn estimated_total_time(times: &[(Instant, Duration)], true_count: u64) -> Duration {
+	let sum = times.iter().map(|(_, d)| d).sum::<Duration>();
+
+	if times.is_empty() || true_count as usize == times.len() {
+		return sum;
+	}
+
+	sum.mul_f64(true_count as f64 / times.len() as f64)
+}
+
+fn print_stats(label: &'static str, times: &[(Instant, Duration)], true_count: u64) {
 	let latencies = times
 		.iter()
 		.map(|(_, duration)| duration.as_nanos() as f64)
@@ -449,7 +607,15 @@ fn print_stats(label: &'static str, times: &[(Instant, Duration)]) {
 
 	println!("\n*** {label} stats ***\n");
 
-	println!("{label} count:\t{}", data.len());
+	println!("{label} count:\t{}", true_count);
+
+	if (true_count as usize) != data.len() {
+		println!(
+			"{label} latency samples:\t{} (reservoir-sampled; counts and \
+			 totals above are exact)",
+			data.len(),
+		);
+	}
 
 	print_dist(&mut data);
 	print_simple_stats(label, &data);

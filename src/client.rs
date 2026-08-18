@@ -285,6 +285,13 @@ impl BenchmarkClient {
         self
     }
 
+    /// Caps retained latency samples for this client's `Stats`. See
+    /// `Stats::with_max_samples`; `0` keeps every sample.
+    pub fn with_max_latency_samples(mut self, max_samples: usize) -> Self {
+        self.stats = std::mem::take(&mut self.stats).with_max_samples(max_samples);
+        self
+    }
+
 
     
     pub fn run(&mut self) -> Result<Stats, Box<dyn Error + Send + Sync>> {
