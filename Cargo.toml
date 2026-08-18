@@ -51,6 +51,10 @@ hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve = []
 hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve = []
 hybrid_s3_fifo_lazy_demotion_reprieve = []
 hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve = []
+# Recency (LRU) fast tier + frequency (LFU) slow tier. Promotion threshold
+# via LRU_LFU_PROMOTE_K (absolute frequency; default 3 -- 1 and 2 degenerate
+# to plain lru_hybrid_cache, see the backend comment).
+hybrid_lru_lfu = []
 
 [dependencies.paper-cache]
 path = "/home/griff/work/paper-cache-cxl"
