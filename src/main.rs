@@ -1015,6 +1015,16 @@ fn main() {
     // migration backlog as settling.
     let cache_report = backend.cache_report();
 
+    // Sampled here, not at exit: this is peak: every client thread has joined
+    // but `backend` is still alive, so the cache still holds its full working
+    // set. jemalloc's own atexit `stats_print` runs after the drop, when
+    // `allocated` has already fallen to a few MB and the ratios are
+    // meaningless. `None` unless the build actually links jemalloc.
+    if let Some(jemalloc_stats) = paper_cache::jemalloc_stats() {
+        eprintln!("{jemalloc_stats}");
+    }
+    eprintln!("{}", paper_cache::umf_dram_stats());
+
     if let Some(cache_report) = cache_report {
         let run_summary = RunSummary {
             trace: args.trace_path.as_ref()

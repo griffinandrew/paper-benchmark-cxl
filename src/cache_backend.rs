@@ -426,9 +426,19 @@ impl PaperCacheBackend {
         // Policy selectable via PAPER_POLICY so this non-hybrid baseline can be
         // matched to whichever hybrid it is compared against. Defaults to Lfu,
         // the previous hardcoded value.
+        // s3-fifo and 2q added so the DRAM baseline can match the s3-fifo/2q
+        // hybrids. Params follow the hybrid convention (small-queue ratio 0.1);
+        // 2q also needs k_out (the A1out ghost queue), which no hybrid has --
+        // 0.5 is the classic Johnson-Shasha value. Both overridable.
+        let ratio: f64 = std::env::var("PAPER_POLICY_RATIO")
+            .ok().and_then(|v| v.parse().ok()).unwrap_or(0.1);
+        let k_out: f64 = std::env::var("PAPER_POLICY_K_OUT")
+            .ok().and_then(|v| v.parse().ok()).unwrap_or(0.5);
         let policy = match std::env::var("PAPER_POLICY").ok().as_deref() {
             Some("fifo") => PaperPolicy::Fifo,
             Some("lru") => PaperPolicy::Lru,
+            Some("s3-fifo") | Some("s3fifo") => PaperPolicy::SThreeFifo(ratio),
+            Some("2q") | Some("two-q") => PaperPolicy::TwoQ(ratio, k_out),
             _ => PaperPolicy::Lfu,
         };
         let cache = PaperCache::<u64, Box<[u8]>>::new(max_size, &[policy], policy)
