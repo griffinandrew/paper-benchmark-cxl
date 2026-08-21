@@ -141,8 +141,6 @@ use paper_cache::{PaperCache, PaperPolicy, CacheError as PcError};
 #[cfg(feature = "allocator_api")]
 use paper_cache::BufferPMEM;
 
-#[cfg(feature = "value_dram")]
-use paper_cache::allocator::ValueDRAM;
 
 #[cfg(any(feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_2q_fast_admission", feature = "hybrid_2q_fast_admission_reprieve", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve", feature = "hybrid_lru_lfu"))]
 use paper_cache::{TieredBuffer, CacheTierSize};

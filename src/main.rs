@@ -642,7 +642,7 @@ fn prewarm(bytes: usize) {
 
 #[cfg(feature = "devdax_bump")]
 fn init_storage() {
-    paper_cache::allocator::DevDaxBump::init();
+    compile_error!("devdax_bump needs a DAX-backed allocator; the UMF one was removed");
 }
 
 
@@ -679,22 +679,16 @@ fn prefault_fast_tier(buf: &mut [u8]) {
 
 
 fn main() {
-    #[cfg(feature = "pmem_region_alloc")] { paper_cache::allocator::RegionHybrid::init();}
 
 
 
-    #[cfg(feature = "umf")]
-    paper_cache::allocator::HybridObjects::init_and_prewarm(
-        1,                                    // PMEM node
-        30 * 1024 * 1024 * 1024,               // 48 GiB working set
-    );
+    // The slow tier used to be a UMF/TBB pool that had to be constructed and
+    // prewarmed here. It is now node-1-bound jemalloc arenas, built lazily on
+    // first use, so there is nothing to set up. Note this call fired even in
+    // jemalloc builds, which were therefore also creating a 30 GB UMF pool
+    // they never allocated from.
 
-    #[cfg(feature = "value_dram")]
-    paper_cache::allocator::ValueDRAM::init_and_prewarm(2, 8 * 1024 * 1024 * 1024); // 8 GiB working set
 
-    #[cfg(feature = "daxpmem")] {
-        paper_cache::allocator::DAXPMEM::init_and_prewarm();
-    }
 
     //println!("warmup done (pid {}), attach perf then press enter... ", std::process::id());
     //io::stderr().flush().unwrap();
@@ -1023,7 +1017,6 @@ fn main() {
     if let Some(jemalloc_stats) = paper_cache::jemalloc_stats() {
         eprintln!("{jemalloc_stats}");
     }
-    eprintln!("{}", paper_cache::umf_dram_stats());
 
     if let Some(cache_report) = cache_report {
         let run_summary = RunSummary {
