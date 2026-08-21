@@ -241,175 +241,106 @@ pub struct PaperCacheBackend {
     inner: PaperCache<u64, BufferPMEM>,
 }
 
-#[cfg(feature = "hybrid")]
-pub struct PaperCacheBackend {
-    inner: PaperCache<u64,TieredBuffer>,
-}
-
-#[cfg(feature = "hybrid_lfu")]
+#[cfg(any(feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_2q_fast_admission", feature = "hybrid_2q_fast_admission_reprieve", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_lru_lfu", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve"))]
 pub struct PaperCacheBackend {
     inner: PaperCache<u64, TieredBuffer>,
 }
 
-#[cfg(feature = "hybrid_2q")]
-pub struct PaperCacheBackend {
-    inner: PaperCache<u64, TieredBuffer>,
+#[cfg(any(feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_2q_fast_admission", feature = "hybrid_2q_fast_admission_reprieve", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_lru_lfu", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve"))]
+fn two_q_k_in() -> f64 {
+	std::env::var("TWO_Q_K_IN").ok().and_then(|v| v.parse().ok()).unwrap_or(0.1)
 }
 
-#[cfg(feature = "hybrid_2q_fast_admission")]
-pub struct PaperCacheBackend {
-    inner: PaperCache<u64, TieredBuffer>,
+/// The policy this build's feature historically hard-wired, so existing
+/// per-feature build commands behave identically with no environment set.
+#[cfg(any(feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_2q_fast_admission", feature = "hybrid_2q_fast_admission_reprieve", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_lru_lfu", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve"))]
+#[allow(unreachable_code)]
+fn default_policy() -> PaperPolicy {
+	#[cfg(feature = "hybrid")]
+	{ return PaperPolicy::LruHybrid; }
+	#[cfg(feature = "hybrid_lfu")]
+	{ return PaperPolicy::LfuHybrid; }
+	#[cfg(feature = "hybrid_2q")]
+	{ return PaperPolicy::TwoQHybrid(0.1); }
+	#[cfg(feature = "hybrid_2q_fast_admission")]
+	{ return PaperPolicy::TwoQFastAdmissionHybrid(two_q_k_in()); }
+	#[cfg(feature = "hybrid_2q_fast_admission_reprieve")]
+	{ return PaperPolicy::TwoQFastAdmissionReprieveHybrid(two_q_k_in()); }
+	#[cfg(feature = "hybrid_fifo")]
+	{ return PaperPolicy::FifoHybrid; }
+	#[cfg(feature = "hybrid_lru_sized")]
+	{ return PaperPolicy::LruSizedHybrid; }
+	#[cfg(feature = "hybrid_lru_lfu")]
+	{ return PaperPolicy::LruLfuHybrid(std::env::var("LRU_LFU_PROMOTE_K").ok().and_then(|v| v.parse().ok()).unwrap_or(3)); }
+	#[cfg(feature = "hybrid_s3_fifo")]
+	{ return PaperPolicy::S3FifoHybrid(0.1); }
+	#[cfg(feature = "hybrid_2q_ghost")]
+	{ return PaperPolicy::TwoQGhostHybrid(0.1); }
+	#[cfg(feature = "hybrid_s3_fifo_ghost")]
+	{ return PaperPolicy::S3FifoGhostHybrid(0.1); }
+	#[cfg(feature = "hybrid_s3_fifo_ghost_lazy_demotion")]
+	{ return PaperPolicy::S3FifoGhostLazyDemotionHybrid(0.1); }
+	#[cfg(feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission")]
+	{ return PaperPolicy::S3FifoGhostLazyDemotionFastAdmissionHybrid(0.1); }
+	#[cfg(feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint")]
+	{ return PaperPolicy::S3FifoGhostLazyDemotionFastAdmissionMidpointHybrid(0.1); }
+	#[cfg(feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve")]
+	{ return PaperPolicy::S3FifoLazyDemotionFastAdmissionMidpointReprieveHybrid(0.1); }
+	#[cfg(feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve")]
+	{ return PaperPolicy::S3FifoLazyDemotionFastAdmissionReprieveHybrid(0.1); }
+	#[cfg(feature = "hybrid_s3_fifo_lazy_demotion_reprieve")]
+	{ return PaperPolicy::S3FifoLazyDemotionReprieveHybrid(0.1); }
+	#[cfg(feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve")]
+	{ return PaperPolicy::S3FifoLazyDemotionFastAdmissionSplitSlowReprieveHybrid(0.1); }
 }
-#[cfg(feature = "hybrid_2q_fast_admission")]
+
+#[cfg(any(feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_2q_fast_admission", feature = "hybrid_2q_fast_admission_reprieve", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_lru_lfu", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve"))]
 impl PaperCacheBackend {
     pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Same FAST_TIER_GB convention and 0.1 k_in as `hybrid_2q`, kept
-        // identical so the two are directly comparable -- the whole point of
-        // this design is to isolate the effect of moving the one-access queue
-        // to the fast tier, which only holds if nothing else differs.
-        //
-        // Worth knowing when sweeping, though: unlike `hybrid_2q`, k_in here
-        // is a DRAM reservation carved out of FAST_TIER_GB rather than an
-        // independent PMEM budget. At a 24 GB cache and FAST_TIER_GB=4, k_in
-        // 0.1 reserves 2.4 GB of the 4 GB fast tier for objects with no
-        // demonstrated reuse, leaving 1.6 GB for the main queue. Sweeping
-        // k_in down is likely worthwhile here in a way it is not for
-        // `hybrid_2q`.
         let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(4.0);
-
         let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
 
-        let k_in: f64 = std::env::var("TWO_Q_K_IN")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0.1);
+        // One binary, any design: PAPER_POLICY overrides the feature default
+        // with a policy string ("lru-hybrid", "2q-hybrid-0.1",
+        // "s3-fifo-ghost-lazy-demotion-hybrid-0.1", ...).
+        let policy = match std::env::var("PAPER_POLICY") {
+            Ok(text) => text
+                .parse::<PaperPolicy>()
+                .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?,
+            Err(_) => default_policy(),
+        };
 
-        let cache = PaperCache::<u64, TieredBuffer>::new(
-            max_size,
-            CacheTierSize::Mb(fast_tier_mb),
-            k_in,
-        )
+        let cache = match policy {
+            // The size-split design takes three sizing scalars: split the
+            // fast budget evenly, threshold from SIZED_THRESHOLD (bytes).
+            PaperPolicy::LruSizedHybrid => {
+                let half_mb = fast_tier_mb / 2;
+                let threshold: u64 = std::env::var("SIZED_THRESHOLD")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(16384);
+                PaperCache::<u64, TieredBuffer>::new_sized(
+                    max_size,
+                    CacheTierSize::Mb(half_mb),
+                    CacheTierSize::Mb(half_mb),
+                    CacheTierSize::Bytes(threshold),
+                )
+            },
+
+            policy => PaperCache::<u64, TieredBuffer>::new(
+                max_size,
+                CacheTierSize::Mb(fast_tier_mb),
+                policy,
+            ),
+        }
         .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+
         Ok(PaperCacheBackend { inner: cache })
     }
 }
-
-#[cfg(feature = "hybrid_2q_fast_admission_reprieve")]
-pub struct PaperCacheBackend {
-    inner: PaperCache<u64, TieredBuffer>,
-}
-#[cfg(feature = "hybrid_2q_fast_admission_reprieve")]
-impl PaperCacheBackend {
-    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Same knobs as `hybrid_2q_fast_admission`, kept identical so the
-        // two are directly comparable -- this design differs only in what
-        // happens to a one-access key that ages out (reprieved to the slow
-        // tier rather than evicted), so any other difference would confound
-        // the comparison.
-        //
-        // Original note, still applicable: same FAST_TIER_GB convention and
-        // 0.1 k_in as `hybrid_2q`, kept
-        // identical so the two are directly comparable -- the whole point of
-        // this design is to isolate the effect of moving the one-access queue
-        // to the fast tier, which only holds if nothing else differs.
-        //
-        // Worth knowing when sweeping, though: unlike `hybrid_2q`, k_in here
-        // is a DRAM reservation carved out of FAST_TIER_GB rather than an
-        // independent PMEM budget. At a 24 GB cache and FAST_TIER_GB=4, k_in
-        // 0.1 reserves 2.4 GB of the 4 GB fast tier for objects with no
-        // demonstrated reuse, leaving 1.6 GB for the main queue. Sweeping
-        // k_in down is likely worthwhile here in a way it is not for
-        // `hybrid_2q`.
-        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4.0);
-
-        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
-
-        let k_in: f64 = std::env::var("TWO_Q_K_IN")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0.1);
-
-        let cache = PaperCache::<u64, TieredBuffer>::new(
-            max_size,
-            CacheTierSize::Mb(fast_tier_mb),
-            k_in,
-        )
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
-        Ok(PaperCacheBackend { inner: cache })
-    }
-}
-
-#[cfg(feature = "hybrid_fifo")]
-pub struct PaperCacheBackend {
-    inner: PaperCache<u64, TieredBuffer>,
-}
-
-#[cfg(feature = "hybrid_lru_sized")]
-pub struct PaperCacheBackend {
-    inner: PaperCache<u64, TieredBuffer>,
-}
-
-#[cfg(feature = "hybrid_lru_lfu")]
-pub struct PaperCacheBackend {
-    inner: PaperCache<u64, TieredBuffer>,
-}
-
-#[cfg(feature = "hybrid_s3_fifo")]
-pub struct PaperCacheBackend {
-    inner: PaperCache<u64, TieredBuffer>,
-}
-
-#[cfg(feature = "hybrid_2q_ghost")]
-pub struct PaperCacheBackend {
-    inner: PaperCache<u64, TieredBuffer>,
-}
-
-#[cfg(feature = "hybrid_s3_fifo_ghost")]
-pub struct PaperCacheBackend {
-    inner: PaperCache<u64, TieredBuffer>,
-}
-
-#[cfg(feature = "hybrid_s3_fifo_ghost_lazy_demotion")]
-pub struct PaperCacheBackend {
-    inner: PaperCache<u64, TieredBuffer>,
-}
-
-#[cfg(feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission")]
-pub struct PaperCacheBackend {
-    inner: PaperCache<u64, TieredBuffer>,
-}
-
-#[cfg(feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint")]
-pub struct PaperCacheBackend {
-    inner: PaperCache<u64, TieredBuffer>,
-}
-
-#[cfg(feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve")]
-pub struct PaperCacheBackend {
-    inner: PaperCache<u64, TieredBuffer>,
-}
-
-#[cfg(feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve")]
-pub struct PaperCacheBackend {
-    inner: PaperCache<u64, TieredBuffer>,
-}
-
-#[cfg(feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve")]
-pub struct PaperCacheBackend {
-    inner: PaperCache<u64, TieredBuffer>,
-}
-
-#[cfg(feature = "hybrid_s3_fifo_lazy_demotion_reprieve")]
-pub struct PaperCacheBackend {
-    inner: PaperCache<u64, TieredBuffer>,
-}
-
 
 /*
 #[cfg(feature = "allocator_api")]
@@ -459,510 +390,6 @@ impl PaperCacheBackend {
         Ok(PaperCacheBackend { inner: cache })
     }
 }
-
-#[cfg(feature = "hybrid")]
-impl PaperCacheBackend {
-    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Fast-tier size in GB, overridable via FAST_TIER_GB (defaults to 4,
-        // the prior hardcoded value) so a fast-tier sweep doesn't need a
-        // rebuild per size -- matches hybrid_lfu's pattern below. Parsed as
-        // f64 (not u64) and converted to CacheTierSize::Mb so fractional
-        // values like "2.5" work -- CacheTierSize::Gb only takes a whole
-        // u64, which can't express 2.5 GB directly.
-        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4.0);
-        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
-
-        let cache = PaperCache::<u64, TieredBuffer>::new(
-            max_size,
-            CacheTierSize::Mb(fast_tier_mb),
-        )
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
-        Ok(PaperCacheBackend { inner: cache })
-    }
-}
-
-#[cfg(feature = "hybrid_lfu")]
-impl PaperCacheBackend {
-    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Fast-tier size in GB, overridable via FAST_TIER_GB (defaults to 4,
-        // the prior hardcoded value) so a fast-tier sweep doesn't need a
-        // rebuild per size. Parsed as f64 (not u64) and converted to
-        // CacheTierSize::Mb, matching the "hybrid" (LRU) block's approach,
-        // so fractional values like "13.5"/"17.5" work -- CacheTierSize::Gb
-        // only takes a whole u64, which can't express a fractional GB.
-        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4.0);
-        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
-
-        let cache = PaperCache::<u64, TieredBuffer>::new(
-            max_size,
-            CacheTierSize::Mb(fast_tier_mb),
-        )
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
-        Ok(PaperCacheBackend { inner: cache })
-    }
-}
-
-#[cfg(feature = "hybrid_2q")]
-impl PaperCacheBackend {
-    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Parsed as f64 and converted to CacheTierSize::Mb so fractional
-        // sweep values like "0.5"/"2.5" work. As u64 this silently fell back
-        // to the 4 GB default for any fractional FAST_TIER_GB
-        // (`"0.5".parse::<u64>()` fails, and the `.ok()` swallowed it), so a
-        // sweep passing fractional GB measured 4 GB every time. Mb and Gb are
-        // both decimal in `CacheTierSize` (10^6 / 10^9), so Mb(gb * 1000) is
-        // exactly the old Gb(gb) for whole values -- existing whole-GB results
-        // stay directly comparable.
-        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4.0);
-
-        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
-
-        let cache = PaperCache::<u64, TieredBuffer>::new(
-            max_size,
-            CacheTierSize::Mb(fast_tier_mb),
-            0.1,
-        )
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
-        Ok(PaperCacheBackend { inner: cache })
-    }
-}
-
-#[cfg(feature = "hybrid_fifo")]
-impl PaperCacheBackend {
-    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Parsed as f64 and converted to CacheTierSize::Mb so fractional
-        // sweep values like "0.5"/"2.5" work. As u64 this silently fell back
-        // to the 4 GB default for any fractional FAST_TIER_GB
-        // (`"0.5".parse::<u64>()` fails, and the `.ok()` swallowed it), so a
-        // sweep passing fractional GB measured 4 GB every time. Mb and Gb are
-        // both decimal in `CacheTierSize` (10^6 / 10^9), so Mb(gb * 1000) is
-        // exactly the old Gb(gb) for whole values -- existing whole-GB results
-        // stay directly comparable.
-        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4.0);
-
-        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
-
-        let cache = PaperCache::<u64, TieredBuffer>::new(
-            max_size,
-            CacheTierSize::Mb(fast_tier_mb),
-        )
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
-        Ok(PaperCacheBackend { inner: cache })
-    }
-}
-
-#[cfg(feature = "hybrid_lru_sized")]
-impl PaperCacheBackend {
-    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // FAST_TIER_GB is the *total* fast-tier budget (matching every other
-        // hybrid design's env-var sweep convention), split evenly between
-        // the small and large segments. size_threshold is fixed at 16 KiB
-        // (16384 bytes), close to these traces' ~16.1-16.5 KB average
-        // object size, so both segments see genuine traffic rather than one
-        // being empty.
-        // Parsed as f64, not u64, so fractional sweep values like "0.5"/"2.5"
-        // work. As u64 this silently fell back to the 4 GB default for any
-        // fractional FAST_TIER_GB (`"0.5".parse::<u64>()` fails, and the
-        // `.ok()` swallowed it) -- a fast-tier sweep passing fractional GB
-        // was measuring 4 GB every time, not the size it asked for.
-        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4.0);
-
-        let half_mb = (fast_tier_gb * 1000.0 / 2.0).round() as u64;
-
-        let cache = PaperCache::<u64, TieredBuffer>::new(
-            max_size,
-            CacheTierSize::Mb(half_mb),
-            CacheTierSize::Mb(half_mb),
-            CacheTierSize::Bytes(16384),
-        )
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
-        Ok(PaperCacheBackend { inner: cache })
-    }
-}
-
-#[cfg(feature = "hybrid_lru_lfu")]
-impl PaperCacheBackend {
-    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Same FAST_TIER_GB env-var sweep convention as every other hybrid,
-        // parsed as f64 so fractional GB values work (see the note on the
-        // other backends: parsing as u64 silently fell back to the default).
-        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4.0);
-
-        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
-
-        // LRU_LFU_PROMOTE_K is the ABSOLUTE frequency a slow-tier object must
-        // reach to be promoted -- not a count of accesses since it was
-        // demoted. A key admitted and never accessed demotes carrying
-        // frequency 1, so 1 and 2 both promote on the first slow access
-        // (identical to `hybrid`/lru_hybrid_cache, i.e. the feature under
-        // test does nothing); 3 is the smallest value that actually filters.
-        // Defaulted to 3 for that reason, and exposed as an env var so the
-        // threshold can be swept without a rebuild (same convention as
-        // TWO_Q_K_IN). See lru_lfu_hybrid_stack.rs's module doc.
-        let promote_k: u16 = std::env::var("LRU_LFU_PROMOTE_K")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(3);
-
-        let cache = PaperCache::<u64, TieredBuffer>::new(
-            max_size,
-            CacheTierSize::Mb(fast_tier_mb),
-            promote_k,
-        )
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
-        Ok(PaperCacheBackend { inner: cache })
-    }
-}
-
-#[cfg(feature = "hybrid_s3_fifo")]
-impl PaperCacheBackend {
-    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Same FAST_TIER_GB env-var sweep convention as every other hybrid.
-        // one_access_ratio fixed at 0.1, matching hybrid_2q's k_in convention
-        // (the one other hybrid design with an equivalent extra ratio param).
-        // Parsed as f64 and converted to CacheTierSize::Mb so fractional
-        // sweep values like "0.5"/"2.5" work. As u64 this silently fell back
-        // to the 4 GB default for any fractional FAST_TIER_GB
-        // (`"0.5".parse::<u64>()` fails, and the `.ok()` swallowed it), so a
-        // sweep passing fractional GB measured 4 GB every time. Mb and Gb are
-        // both decimal in `CacheTierSize` (10^6 / 10^9), so Mb(gb * 1000) is
-        // exactly the old Gb(gb) for whole values -- existing whole-GB results
-        // stay directly comparable.
-        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4.0);
-
-        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
-
-        let cache = PaperCache::<u64, TieredBuffer>::new(
-            max_size,
-            CacheTierSize::Mb(fast_tier_mb),
-            0.1,
-        )
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
-        Ok(PaperCacheBackend { inner: cache })
-    }
-}
-
-#[cfg(feature = "hybrid_2q_ghost")]
-impl PaperCacheBackend {
-    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Same FAST_TIER_GB env-var sweep convention and 0.1 ratio as
-        // hybrid_2q -- kept identical to the non-ghost variant so results
-        // are directly comparable.
-        // Parsed as f64 and converted to CacheTierSize::Mb so fractional
-        // sweep values like "0.5"/"2.5" work. As u64 this silently fell back
-        // to the 4 GB default for any fractional FAST_TIER_GB
-        // (`"0.5".parse::<u64>()` fails, and the `.ok()` swallowed it), so a
-        // sweep passing fractional GB measured 4 GB every time. Mb and Gb are
-        // both decimal in `CacheTierSize` (10^6 / 10^9), so Mb(gb * 1000) is
-        // exactly the old Gb(gb) for whole values -- existing whole-GB results
-        // stay directly comparable.
-        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4.0);
-
-        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
-
-        let cache = PaperCache::<u64, TieredBuffer>::new(
-            max_size,
-            CacheTierSize::Mb(fast_tier_mb),
-            0.1,
-        )
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
-        Ok(PaperCacheBackend { inner: cache })
-    }
-}
-
-#[cfg(feature = "hybrid_s3_fifo_ghost")]
-impl PaperCacheBackend {
-    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Same FAST_TIER_GB env-var sweep convention and 0.1 ratio as
-        // hybrid_s3_fifo -- kept identical to the non-ghost variant so
-        // results are directly comparable.
-        // Parsed as f64 and converted to CacheTierSize::Mb so fractional
-        // sweep values like "0.5"/"2.5" work. As u64 this silently fell back
-        // to the 4 GB default for any fractional FAST_TIER_GB
-        // (`"0.5".parse::<u64>()` fails, and the `.ok()` swallowed it), so a
-        // sweep passing fractional GB measured 4 GB every time. Mb and Gb are
-        // both decimal in `CacheTierSize` (10^6 / 10^9), so Mb(gb * 1000) is
-        // exactly the old Gb(gb) for whole values -- existing whole-GB results
-        // stay directly comparable.
-        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4.0);
-
-        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
-
-        let cache = PaperCache::<u64, TieredBuffer>::new(
-            max_size,
-            CacheTierSize::Mb(fast_tier_mb),
-            0.1,
-        )
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
-        Ok(PaperCacheBackend { inner: cache })
-    }
-}
-
-#[cfg(feature = "hybrid_s3_fifo_ghost_lazy_demotion")]
-impl PaperCacheBackend {
-    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Same FAST_TIER_GB env-var sweep convention and 0.1 ratio as
-        // hybrid_s3_fifo_ghost -- kept identical to the ghost variant (the
-        // only new mechanic this design adds is a demotion-time
-        // reference-bit gate, entirely internal to the stack) so results
-        // are directly comparable.
-        // Parsed as f64 and converted to CacheTierSize::Mb so fractional
-        // sweep values like "0.5"/"2.5" work. As u64 this silently fell back
-        // to the 4 GB default for any fractional FAST_TIER_GB
-        // (`"0.5".parse::<u64>()` fails, and the `.ok()` swallowed it), so a
-        // sweep passing fractional GB measured 4 GB every time. Mb and Gb are
-        // both decimal in `CacheTierSize` (10^6 / 10^9), so Mb(gb * 1000) is
-        // exactly the old Gb(gb) for whole values -- existing whole-GB results
-        // stay directly comparable.
-        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4.0);
-
-        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
-
-        let cache = PaperCache::<u64, TieredBuffer>::new(
-            max_size,
-            CacheTierSize::Mb(fast_tier_mb),
-            0.1,
-        )
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
-        Ok(PaperCacheBackend { inner: cache })
-    }
-}
-
-#[cfg(feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission")]
-impl PaperCacheBackend {
-    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Same FAST_TIER_GB env-var sweep convention and 0.1 ratio as
-        // hybrid_s3_fifo_ghost_lazy_demotion. The 0.1 one_access_ratio here
-        // means something new though: it's no longer an independent
-        // slow-tier budget, it's a real reservation carved out of
-        // FAST_TIER_GB itself (see
-        // s3_fifo_ghost_lazy_demotion_fast_admission_hybrid_stack.rs's
-        // module doc) -- e.g. at FAST_TIER_GB=6 and a 24GB cache, 10% of
-        // 24GB (2.4GB) comes out of the 6GB fast budget, leaving ~3.6GB
-        // effective room for the main queue's fast segment.
-        // Parsed as f64 and converted to CacheTierSize::Mb so fractional
-        // sweep values like "0.5"/"2.5" work. As u64 this silently fell back
-        // to the 4 GB default for any fractional FAST_TIER_GB
-        // (`"0.5".parse::<u64>()` fails, and the `.ok()` swallowed it), so a
-        // sweep passing fractional GB measured 4 GB every time. Mb and Gb are
-        // both decimal in `CacheTierSize` (10^6 / 10^9), so Mb(gb * 1000) is
-        // exactly the old Gb(gb) for whole values -- existing whole-GB results
-        // stay directly comparable.
-        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4.0);
-
-        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
-
-        let cache = PaperCache::<u64, TieredBuffer>::new(
-            max_size,
-            CacheTierSize::Mb(fast_tier_mb),
-            0.1,
-        )
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
-        Ok(PaperCacheBackend { inner: cache })
-    }
-}
-
-#[cfg(feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint")]
-impl PaperCacheBackend {
-    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Same FAST_TIER_GB env-var sweep convention and 0.1 ratio as
-        // hybrid_s3_fifo_ghost_lazy_demotion_fast_admission -- kept
-        // identical to the predecessor variant so results are directly
-        // comparable. The only new mechanic this design adds (a mid-slow-
-        // segment reference-bit checkpoint promoting a re-accessed key
-        // early instead of always waiting for the tail) is entirely
-        // internal to the stack and doesn't add a new sizing knob.
-        // Parsed as f64 and converted to CacheTierSize::Mb so fractional
-        // sweep values like "0.5"/"2.5" work. As u64 this silently fell back
-        // to the 4 GB default for any fractional FAST_TIER_GB
-        // (`"0.5".parse::<u64>()` fails, and the `.ok()` swallowed it), so a
-        // sweep passing fractional GB measured 4 GB every time. Mb and Gb are
-        // both decimal in `CacheTierSize` (10^6 / 10^9), so Mb(gb * 1000) is
-        // exactly the old Gb(gb) for whole values -- existing whole-GB results
-        // stay directly comparable.
-        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4.0);
-
-        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
-
-        let cache = PaperCache::<u64, TieredBuffer>::new(
-            max_size,
-            CacheTierSize::Mb(fast_tier_mb),
-            0.1,
-        )
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
-        Ok(PaperCacheBackend { inner: cache })
-    }
-}
-
-#[cfg(feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve")]
-impl PaperCacheBackend {
-    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Same FAST_TIER_GB env-var sweep convention and 0.1 ratio as
-        // hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint --
-        // kept identical to the predecessor variant so results are
-        // directly comparable. The two mechanics this design changes (no
-        // ghost queue; a one-access key that ages out is spliced into the
-        // slow tier instead of being evicted) are entirely internal to the
-        // stack and don't add a new sizing knob.
-        // Parsed as f64 and converted to CacheTierSize::Mb so fractional
-        // sweep values like "0.5"/"2.5" work. As u64 this silently fell back
-        // to the 4 GB default for any fractional FAST_TIER_GB
-        // (`"0.5".parse::<u64>()` fails, and the `.ok()` swallowed it), so a
-        // sweep passing fractional GB measured 4 GB every time. Mb and Gb are
-        // both decimal in `CacheTierSize` (10^6 / 10^9), so Mb(gb * 1000) is
-        // exactly the old Gb(gb) for whole values -- existing whole-GB results
-        // stay directly comparable.
-        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4.0);
-
-        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
-
-        let cache = PaperCache::<u64, TieredBuffer>::new(
-            max_size,
-            CacheTierSize::Mb(fast_tier_mb),
-            0.1,
-        )
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
-        Ok(PaperCacheBackend { inner: cache })
-    }
-}
-
-#[cfg(feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve")]
-impl PaperCacheBackend {
-    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Same FAST_TIER_GB env-var sweep convention and 0.1 ratio as
-        // every other variant in this lineage, so results stay directly
-        // comparable. This variant only *removes* the mid-slow-tier
-        // checkpoint; it adds no sizing knob.
-        // Parsed as f64 and converted to CacheTierSize::Mb so fractional
-        // sweep values like "0.5"/"2.5" work. As u64 this silently fell back
-        // to the 4 GB default for any fractional FAST_TIER_GB
-        // (`"0.5".parse::<u64>()` fails, and the `.ok()` swallowed it), so a
-        // sweep passing fractional GB measured 4 GB every time. Mb and Gb are
-        // both decimal in `CacheTierSize` (10^6 / 10^9), so Mb(gb * 1000) is
-        // exactly the old Gb(gb) for whole values -- existing whole-GB results
-        // stay directly comparable.
-        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4.0);
-
-        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
-
-        let cache = PaperCache::<u64, TieredBuffer>::new(
-            max_size,
-            CacheTierSize::Mb(fast_tier_mb),
-            0.1,
-        )
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
-        Ok(PaperCacheBackend { inner: cache })
-    }
-}
-
-#[cfg(feature = "hybrid_s3_fifo_lazy_demotion_reprieve")]
-impl PaperCacheBackend {
-    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Same FAST_TIER_GB env-var sweep convention and 0.1 ratio as
-        // every other variant in this lineage, so results stay directly
-        // comparable. This variant only *removes* the mid-slow-tier
-        // checkpoint; it adds no sizing knob.
-        // Parsed as f64 and converted to CacheTierSize::Mb so fractional
-        // sweep values like "0.5"/"2.5" work. As u64 this silently fell back
-        // to the 4 GB default for any fractional FAST_TIER_GB
-        // (`"0.5".parse::<u64>()` fails, and the `.ok()` swallowed it), so a
-        // sweep passing fractional GB measured 4 GB every time. Mb and Gb are
-        // both decimal in `CacheTierSize` (10^6 / 10^9), so Mb(gb * 1000) is
-        // exactly the old Gb(gb) for whole values -- existing whole-GB results
-        // stay directly comparable.
-        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4.0);
-
-        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
-
-        let cache = PaperCache::<u64, TieredBuffer>::new(
-            max_size,
-            CacheTierSize::Mb(fast_tier_mb),
-            0.1,
-        )
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
-        Ok(PaperCacheBackend { inner: cache })
-    }
-}
-
-#[cfg(feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve")]
-impl PaperCacheBackend {
-    pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        // Same FAST_TIER_GB env-var sweep convention and 0.1 ratio as
-        // every other variant in this lineage, so results stay directly
-        // comparable. Splitting the slow tier into two segments is
-        // internal to the stack (the split point is a fixed 50% of the
-        // slow tier's bytes) and adds no new sizing knob here.
-        // Parsed as f64 and converted to CacheTierSize::Mb so fractional
-        // sweep values like "0.5"/"2.5" work. As u64 this silently fell back
-        // to the 4 GB default for any fractional FAST_TIER_GB
-        // (`"0.5".parse::<u64>()` fails, and the `.ok()` swallowed it), so a
-        // sweep passing fractional GB measured 4 GB every time. Mb and Gb are
-        // both decimal in `CacheTierSize` (10^6 / 10^9), so Mb(gb * 1000) is
-        // exactly the old Gb(gb) for whole values -- existing whole-GB results
-        // stay directly comparable.
-        let fast_tier_gb: f64 = std::env::var("FAST_TIER_GB")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4.0);
-
-        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
-
-        let cache = PaperCache::<u64, TieredBuffer>::new(
-            max_size,
-            CacheTierSize::Mb(fast_tier_mb),
-            0.1,
-        )
-        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
-        Ok(PaperCacheBackend { inner: cache })
-    }
-}
-
-
 
 impl CacheBackend for PaperCacheBackend {
     fn ping(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
