@@ -1,7 +1,7 @@
 #!/bin/bash
 # Sweep every hybrid policy through ONE benchmark binary via PAPER_POLICY.
 #
-# Usage:  sweep_policies.sh <trace-file> <out-prefix> [cache_bytes] [fast_gb]
+# Usage:  sweep_policies.sh <trace-file> <out-prefix> [cache_bytes] [fast_gb] [clients] [clients]
 #
 # The binary must be built from any hybrid feature (they are runtime-equal):
 #   cargo +nightly build --release --features umf,hybrid
@@ -16,6 +16,8 @@ TRACE=${1:?trace file}
 OUT=${2:?output prefix}
 CACHE=${3:-15000000000}
 FASTGB=${4:-5.0}
+CLIENTS=${5:-1}
+CLIENTS=${5:-1}
 BIN=${SWEEP_BIN:-./target/release/paper-benchmark}
 RECORDS=$(( $(stat -c%s "$TRACE") / 25 ))
 
@@ -44,7 +46,7 @@ for pol in $POLICIES; do
   SAMP=$!
   timeout 2400 env PAPER_POLICY=$pol FAST_TIER_GB=$FASTGB "$BIN" \
     --trace-stdin --trace-records "$RECORDS" --use-cache --cache-max-size "$CACHE" \
-    -c 1 --client-type read-through --max-latency-samples 10000000 \
+    -c "$CLIENTS" --client-type read-through --max-latency-samples 10000000 \
     < "$TRACE" > "${OUT}_${pol}.out" 2> "${OUT}_${pol}.err"
   rc=$?
   kill $SAMP 2>/dev/null; pkill -x "$BINNAME" 2>/dev/null
