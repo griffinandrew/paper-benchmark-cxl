@@ -1,6 +1,10 @@
 #!/bin/bash
 # Sweep every hybrid policy through ONE benchmark binary via PAPER_POLICY.
 #
+# The last two are the three-queue 2Q variant. k_in matches its 2Q siblings
+# (0.1); k_out is swept at 0.25 and 0.5 because k_out is a live parameter
+# for the first time here -- in PaperPolicy::TwoQ it is written, never read.
+#
 # Usage:  sweep_policies.sh <trace-file> <out-prefix> [cache_bytes] [fast_gb] [clients]
 #
 # SWEEP_TIMEOUT caps each policy (seconds, default 2400). Full-length traces
@@ -32,7 +36,8 @@ s3-fifo-ghost-lazy-demotion-fast-admission-midpoint-hybrid-0.1 \
 s3-fifo-lazy-demotion-fast-admission-midpoint-reprieve-hybrid-0.1 \
 s3-fifo-lazy-demotion-fast-admission-reprieve-hybrid-0.1 \
 s3-fifo-lazy-demotion-reprieve-hybrid-0.1 \
-s3-fifo-lazy-demotion-fast-admission-split-slow-reprieve-hybrid-0.1"
+s3-fifo-lazy-demotion-fast-admission-split-slow-reprieve-hybrid-0.1 \
+2q-full-fast-admission-hybrid-0.1-0.25 2q-full-fast-admission-hybrid-0.1-0.5"
 
 : > "${OUT}_status.txt"
 BINNAME=$(basename "$BIN")

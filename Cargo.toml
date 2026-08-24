@@ -84,7 +84,7 @@ path = "/home/griff/work/paper-cache-cxl"
 #features = ["key_value_pmem"]
 
 #features = ["hashbrown_dram"]
-features = ["all_dram"]
+features = ["lru_hybrid_cache"]
 #features = ["s3_fifo_lazy_demotion_fast_admission_reprieve_hybrid_cache"]
 
 #features = ["global_hashtable_pmem"]

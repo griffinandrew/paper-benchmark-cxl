@@ -6,7 +6,7 @@
  *   - value_size > 0 only (size 0 is a miss in the source system: no object).
  *   - For each distinct key keep the MAXIMUM value_size ever seen, because an
  *     object must be provisioned for the largest form it takes.
- *   WSS = sum over distinct keys of max(value_size).
+ *   WSS = sum over distinct keys of first_nonzero(value_size).
  *
  * Twitter CSV: timestamp,anon_key,key_size,value_size,client_id,operation,ttl
  * Key is hashed with MurmurHash3_x64_128(key,0).h1 -- the same hash verified
@@ -77,15 +77,18 @@ static inline void put32(uint8_t *p, uint32_t v){ for (int i=0;i<4;i++) p[i]=(ui
 
 /* ---- open addressing: key 0 is held in a side slot so 0 can mean empty ---- */
 static uint64_t *K = NULL;
-static uint32_t *V = NULL;
+static uint32_t *V = NULL;   /* max over time  */
+static uint32_t *F = NULL;   /* first non-zero */
 static uint64_t  CAP = 0, CNT = 0;
 static int       have_zero = 0;
 static uint32_t  zero_val = 0;
+static uint32_t  zero_first = 0;
 
 static void tbl_alloc(uint64_t cap) {
     K = calloc(cap, sizeof(uint64_t));
     V = malloc(cap * sizeof(uint32_t));
-    if (!K || !V) { fprintf(stderr, "OOM allocating %" PRIu64 " slots\n", cap); exit(2); }
+    F = malloc(cap * sizeof(uint32_t));
+    if (!K || !V || !F) { fprintf(stderr, "OOM allocating %" PRIu64 " slots\n", cap); exit(2); }
     CAP = cap;
 }
 
@@ -93,16 +96,16 @@ static void tbl_grow(void);
 
 static inline void tbl_put(uint64_t k, uint32_t v) {
     if (k == 0) {                       /* sentinel collision: keep separately */
-        if (!have_zero) { have_zero = 1; zero_val = v; }
+        if (!have_zero) { have_zero = 1; zero_val = v; zero_first = v; }
         else if (v > zero_val) zero_val = v;
         return;
     }
     uint64_t i = (k * 0x9E3779B97F4A7C15ULL) & (CAP - 1);
     for (;;) {
         uint64_t cur = K[i];
-        if (cur == k) { if (v > V[i]) V[i] = v; return; }
+        if (cur == k) { if (v > V[i]) V[i] = v; return; }   /* F stays at first */
         if (cur == 0) {
-            K[i] = k; V[i] = v; CNT++;
+            K[i] = k; V[i] = v; F[i] = v; CNT++;
             if (CNT * 10 > CAP * 6) tbl_grow();
             return;
         }
@@ -112,21 +115,22 @@ static inline void tbl_put(uint64_t k, uint32_t v) {
 
 static void tbl_grow(void) {
     uint64_t old_cap = CAP;
-    uint64_t *oldK = K; uint32_t *oldV = V;
+    uint64_t *oldK = K; uint32_t *oldV = V; uint32_t *oldF = F;
     uint64_t newcap = CAP * 2;
     fprintf(stderr, "  [grow %" PRIu64 " -> %" PRIu64 " slots, %" PRIu64 " keys]\n",
             old_cap, newcap, CNT);
     K = calloc(newcap, sizeof(uint64_t));
     V = malloc(newcap * sizeof(uint32_t));
-    if (!K || !V) { fprintf(stderr, "OOM growing to %" PRIu64 "\n", newcap); exit(2); }
+    F = malloc(newcap * sizeof(uint32_t));
+    if (!K || !V || !F) { fprintf(stderr, "OOM growing to %" PRIu64 "\n", newcap); exit(2); }
     CAP = newcap; CNT = 0;
     for (uint64_t j = 0; j < old_cap; j++)
         if (oldK[j]) {
             uint64_t k = oldK[j], i = (k * 0x9E3779B97F4A7C15ULL) & (CAP - 1);
             while (K[i]) i = (i + 1) & (CAP - 1);
-            K[i] = k; V[i] = oldV[j]; CNT++;
+            K[i] = k; V[i] = oldV[j]; F[i] = oldF[j]; CNT++;
         }
-    free(oldK); free(oldV);
+    free(oldK); free(oldV); free(oldF);
 }
 
 int main(int argc, char **argv) {
@@ -155,11 +159,14 @@ int main(int argc, char **argv) {
     }
 
     uint64_t distinct = CNT + (have_zero ? 1 : 0);
-    long double wss = have_zero ? zero_val : 0;
-    for (uint64_t i = 0; i < CAP; i++) if (K[i]) wss += V[i];
+    long double wss_max = have_zero ? zero_val   : 0;
+    long double wss     = have_zero ? zero_first : 0;
+    for (uint64_t i = 0; i < CAP; i++) if (K[i]) { wss += F[i]; wss_max += V[i]; }
 
     printf("%s rows=%" PRIu64 " gets=%" PRIu64 " zero_gets=%" PRIu64 " kept=%" PRIu64
-           " distinct=%" PRIu64 " wss_bytes=%.0Lf wss_mb=%.1Lf bad=%" PRIu64 "\n",
-           label, rows, gets, zero_get, kept, distinct, wss, wss / 1048576.0L, bad);
+           " distinct=%" PRIu64 " wss_bytes=%.0Lf wss_mb=%.1Lf"
+           " wss_max_bytes=%.0Lf wss_max_mb=%.1Lf bad=%" PRIu64 "\n",
+           label, rows, gets, zero_get, kept, distinct,
+           wss, wss / 1048576.0L, wss_max, wss_max / 1048576.0L, bad);
     return 0;
 }
