@@ -1,7 +1,10 @@
 #!/bin/bash
 # Sweep every hybrid policy through ONE benchmark binary via PAPER_POLICY.
 #
-# Usage:  sweep_policies.sh <trace-file> <out-prefix> [cache_bytes] [fast_gb] [clients] [clients]
+# Usage:  sweep_policies.sh <trace-file> <out-prefix> [cache_bytes] [fast_gb] [clients]
+#
+# SWEEP_TIMEOUT caps each policy (seconds, default 2400). Full-length traces
+# need more: a 1.1B-record trace takes ~68 min per policy at one client.
 #
 # The binary must be built from any hybrid feature (they are runtime-equal):
 #   cargo +nightly build --release --features umf,hybrid
@@ -17,8 +20,8 @@ OUT=${2:?output prefix}
 CACHE=${3:-15000000000}
 FASTGB=${4:-5.0}
 CLIENTS=${5:-1}
-CLIENTS=${5:-1}
 BIN=${SWEEP_BIN:-./target/release/paper-benchmark}
+TIMEOUT=${SWEEP_TIMEOUT:-2400}
 RECORDS=$(( $(stat -c%s "$TRACE") / 25 ))
 
 POLICIES="lru-hybrid lfu-hybrid fifo-hybrid lru-sized-hybrid lru-lfu-hybrid-3 \
@@ -44,7 +47,7 @@ for pol in $POLICIES; do
       sleep 2
     done ) > "${OUT}_${pol}.samp" 2>/dev/null &
   SAMP=$!
-  timeout 2400 env PAPER_POLICY=$pol FAST_TIER_GB=$FASTGB "$BIN" \
+  timeout "$TIMEOUT" env PAPER_POLICY=$pol FAST_TIER_GB=$FASTGB "$BIN" \
     --trace-stdin --trace-records "$RECORDS" --use-cache --cache-max-size "$CACHE" \
     -c "$CLIENTS" --client-type read-through --max-latency-samples 10000000 \
     < "$TRACE" > "${OUT}_${pol}.out" 2> "${OUT}_${pol}.err"
