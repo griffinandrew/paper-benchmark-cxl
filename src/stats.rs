@@ -541,8 +541,17 @@ impl AddAssign for Stats {
 pub struct OpSummary {
 	pub count: u64,
 	pub mean_ns: f64,
+	pub p50_ns: f64,
 	pub p99_ns: f64,
+	pub p99999_ns: f64,
+	/// The largest latency observed *in the sample*. With `--max-latency-samples`
+	/// set this is a sampled maximum, not the run's true maximum.
+	pub p100_ns: f64,
 	pub total_bytes: u64,
+	/// Operations per second over the wall-clock span the samples cover.
+	pub ops_per_sec: f64,
+	/// Mean bytes per operation, from the true count rather than the sample.
+	pub avg_size: f64,
 }
 
 /// `true_count` is the real number of operations; `times` may be a bounded
@@ -560,13 +569,40 @@ fn summarize(times: &[(Instant, Duration)], total_bytes: u64, true_count: u64) -
 
 	let count = true_count;
 	let mean_ns = latencies.iter().sum::<f64>() / latencies.len() as f64;
+	let p100_ns = latencies.iter().copied().fold(0.0_f64, f64::max);
+
+	// Wall span the samples cover. Reservoir sampling keeps a spread across the
+	// whole run, so first-to-last approximates its duration even when sampled;
+	// with sampling off it is exact.
+	let span = times
+		.iter()
+		.map(|(at, _)| *at)
+		.max()
+		.zip(times.iter().map(|(at, _)| *at).min())
+		.map(|(hi, lo)| hi.duration_since(lo).as_secs_f64())
+		.unwrap_or(0.0);
+
+	let ops_per_sec = if span > 0.0 { count as f64 / span } else { 0.0 };
+	let avg_size = if count > 0 { total_bytes as f64 / count as f64 } else { 0.0 };
 
 	// `Data::quantile` needs `&mut` (it sorts in place), hence the separate
 	// binding rather than chaining off the collect above.
 	let mut data = Data::new(latencies);
+	let p50_ns = data.quantile(0.50);
 	let p99_ns = data.quantile(0.99);
+	let p99999_ns = data.quantile(0.99999);
 
-	OpSummary { count, mean_ns, p99_ns, total_bytes }
+	OpSummary {
+		count,
+		mean_ns,
+		p50_ns,
+		p99_ns,
+		p99999_ns,
+		p100_ns,
+		total_bytes,
+		ops_per_sec,
+		avg_size,
+	}
 }
 
 impl Stats {

@@ -220,6 +220,13 @@ pub struct HybridStatsSnapshot {
     pub demotions: u64,
     pub evictions: u64,
     pub fast_bytes_used: u64,
+
+    /// DRAM reserved for shared per-object metadata across both tiers. Kept
+    /// apart from `fast_bytes_used`, which is object bytes only: the fast
+    /// tier's real DRAM footprint is the two summed, and it is this term that
+    /// caps how many objects fit regardless of their size.
+    pub fast_metadata_bytes: u64,
+
     pub slow_bytes_used: u64,
     pub fast_objects: u64,
     pub slow_objects: u64,
@@ -301,7 +308,11 @@ impl PaperCacheBackend {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(4.0);
-        let fast_tier_mb = (fast_tier_gb * 1000.0).round() as u64;
+        // Binary throughout: `CacheTierSize::Mib` is 2^20 bytes, so a
+        // base-10 conversion here would size a nominal 4 GiB tier at
+        // 4000 MiB = 4.19 GB. paper-cache went binary in "Make cache and
+        // tier sizes binary"; this had not followed.
+        let fast_tier_mib = (fast_tier_gb * 1024.0).round() as u64;
 
         // One binary, any design: PAPER_POLICY overrides the feature default
         // with a policy string ("lru-hybrid", "2q-hybrid-0.1",
@@ -317,22 +328,22 @@ impl PaperCacheBackend {
             // The size-split design takes three sizing scalars: split the
             // fast budget evenly, threshold from SIZED_THRESHOLD (bytes).
             PaperPolicy::LruSizedHybrid => {
-                let half_mb = fast_tier_mb / 2;
+                let half_mib = fast_tier_mib / 2;
                 let threshold: u64 = std::env::var("SIZED_THRESHOLD")
                     .ok()
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(16384);
                 PaperCache::<u64, TieredBuffer>::new_sized(
                     max_size,
-                    CacheTierSize::Mb(half_mb),
-                    CacheTierSize::Mb(half_mb),
+                    CacheTierSize::Mib(half_mib),
+                    CacheTierSize::Mib(half_mib),
                     CacheTierSize::Bytes(threshold),
                 )
             },
 
             policy => PaperCache::<u64, TieredBuffer>::new(
                 max_size,
-                CacheTierSize::Mb(fast_tier_mb),
+                CacheTierSize::Mib(fast_tier_mib),
                 policy,
             ),
         }
@@ -480,6 +491,7 @@ impl CacheBackend for PaperCacheBackend {
                     demotions: stats.demotions,
                     evictions: stats.evictions,
                     fast_bytes_used: stats.fast_bytes_used,
+                    fast_metadata_bytes: stats.fast_metadata_bytes,
                     slow_bytes_used: stats.slow_bytes_used,
                     fast_objects: stats.fast_objects,
                     slow_objects: stats.slow_objects,

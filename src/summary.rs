@@ -61,16 +61,28 @@ const HEADERS: &[&str] = &[
 	"total_sets",
 	"get_count",
 	"get_mean_ns",
+	"get_p50_ns",
 	"get_p99_ns",
+	"get_p99999_ns",
+	"get_p100_ns",
 	"get_total_bytes",
+	"gets_per_sec",
+	"avg_get_size",
 	"set_count",
 	"set_mean_ns",
+	"set_p50_ns",
 	"set_p99_ns",
+	"set_p99999_ns",
+	"set_p100_ns",
 	"set_total_bytes",
+	"sets_per_sec",
+	"avg_set_size",
 	"promotions",
 	"demotions",
 	"evictions",
 	"fast_bytes_used",
+	"fast_metadata_bytes",
+	"fast_dram_total",
 	"slow_bytes_used",
 	"fast_objects",
 	"slow_objects",
@@ -138,11 +150,27 @@ impl RunSummary<'_> {
 		println!("Demotions:\t{}", fmt::number(hybrid.demotions));
 		println!("Evictions:\t{}", fmt::number(hybrid.evictions));
 
+		// Object bytes and metadata are reported apart because they answer
+		// different questions: `fast_bytes_used` is what the tier holds *of the
+		// workload*, while the reservation is the per-object DRAM tax that
+		// decides how many objects can fit at all. At 196 B/object a 4 GiB tier
+		// saturates on metadata alone at ~21.9 M objects, whatever their size.
 		println!(
-			"\nFast tier:\t{} objects, {} ({} B)",
+			"\nFast tier:\t{} objects, {} ({} B) of object data",
 			fmt::number(hybrid.fast_objects),
 			fmt::memory(hybrid.fast_bytes_used, Some(2)),
 			fmt::number(hybrid.fast_bytes_used),
+		);
+
+		println!(
+			"\t\t+ {} ({} B) reserved for per-object metadata",
+			fmt::memory(hybrid.fast_metadata_bytes, Some(2)),
+			fmt::number(hybrid.fast_metadata_bytes),
+		);
+
+		println!(
+			"\t\t= {} total DRAM",
+			fmt::memory(hybrid.fast_bytes_used + hybrid.fast_metadata_bytes, Some(2)),
 		);
 
 		println!(
@@ -191,7 +219,7 @@ impl RunSummary<'_> {
 		// Keep in lockstep with `HEADERS` above.
 		writeln!(
 			file,
-			"{},{},{},{},{},{},{},{},{},{:.6},{},{},{},{:.1},{:.1},{},{},{:.1},{:.1},{},{},{},{},{},{},{},{}",
+			"{},{},{},{},{},{},{},{},{},{:.6},{},{},{},{:.1},{:.1},{:.1},{:.1},{:.1},{},{:.1},{:.1},{},{:.1},{:.1},{:.1},{:.1},{:.1},{},{:.1},{:.1},{},{},{},{},{},{},{},{},{}",
 			self.trace,
 			self.cache.policy,
 			self.clients,
@@ -210,16 +238,28 @@ impl RunSummary<'_> {
 			self.cache.total_sets,
 			self.get.count,
 			self.get.mean_ns,
+			self.get.p50_ns,
 			self.get.p99_ns,
+			self.get.p99999_ns,
+			self.get.p100_ns,
 			self.get.total_bytes,
+			self.get.ops_per_sec,
+			self.get.avg_size,
 			self.set.count,
 			self.set.mean_ns,
+			self.set.p50_ns,
 			self.set.p99_ns,
+			self.set.p99999_ns,
+			self.set.p100_ns,
 			self.set.total_bytes,
+			self.set.ops_per_sec,
+			self.set.avg_size,
 			hybrid.promotions,
 			hybrid.demotions,
 			hybrid.evictions,
 			hybrid.fast_bytes_used,
+			hybrid.fast_metadata_bytes,
+			hybrid.fast_bytes_used + hybrid.fast_metadata_bytes,
 			hybrid.slow_bytes_used,
 			hybrid.fast_objects,
 			hybrid.slow_objects,
