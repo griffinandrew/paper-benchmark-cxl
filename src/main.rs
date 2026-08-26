@@ -1019,11 +1019,18 @@ fn main() {
     }
 
     if let Some(cache_report) = cache_report {
+        // With `--trace-stdin` there is no path to name the run from, which left
+        // `trace` empty and every sweep row unidentifiable. `TRACE_NAME` lets the
+        // caller label a piped run; a real `--trace-path` still wins.
+        let trace_label = args.trace_path.as_ref()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .map(str::to_owned)
+            .or_else(|| std::env::var("TRACE_NAME").ok())
+            .unwrap_or_default();
+
         let run_summary = RunSummary {
-            trace: args.trace_path.as_ref()
-                .and_then(|path| path.file_name())
-                .and_then(|name| name.to_str())
-                .unwrap_or(""),
+            trace: &trace_label,
             clients: args.clients,
             get: stats.get_summary(),
             set: stats.set_summary(),
