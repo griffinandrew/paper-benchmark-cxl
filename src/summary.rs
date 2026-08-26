@@ -56,6 +56,7 @@ const HEADERS: &[&str] = &[
 	"num_objects",
 	"rss",
 	"hwm",
+	"mem_fragmentation_ratio",
 	"miss_ratio",
 	"total_gets",
 	"total_sets",
@@ -219,7 +220,7 @@ impl RunSummary<'_> {
 		// Keep in lockstep with `HEADERS` above.
 		writeln!(
 			file,
-			"{},{},{},{},{},{},{},{},{},{:.6},{},{},{},{:.1},{:.1},{:.1},{:.1},{:.1},{},{:.1},{:.1},{},{:.1},{:.1},{:.1},{:.1},{:.1},{},{:.1},{:.1},{},{},{},{},{},{},{},{},{}",
+			"{},{},{},{},{},{},{},{},{},{:.3},{:.6},{},{},{},{:.1},{:.1},{:.1},{:.1},{:.1},{},{:.1},{:.1},{},{:.1},{:.1},{:.1},{:.1},{:.1},{},{:.1},{:.1},{},{},{},{},{},{},{},{},{}",
 			self.trace,
 			self.cache.policy,
 			self.clients,
@@ -233,6 +234,15 @@ impl RunSummary<'_> {
 			self.cache.num_objects,
 			self.cache.rss,
 			self.cache.hwm,
+			// Reported, not folded into any budget -- the same split Redis makes
+			// between `used_memory` (what the allocator says it handed out) and
+			// `mem_fragmentation_ratio` (how much the process holds beyond that).
+			// Per-object size-class rounding is already exact via `nallocx`; what
+			// this captures is retained dirty pages and arena fragmentation,
+			// which belong to the process rather than to any object.
+			if self.cache.used_size > 0 {
+				self.cache.rss as f64 / self.cache.used_size as f64
+			} else { 0.0 },
 			self.cache.miss_ratio,
 			self.cache.total_gets,
 			self.cache.total_sets,
