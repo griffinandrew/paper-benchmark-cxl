@@ -4,7 +4,7 @@ Measured by the same rules as the Twitter twemcache clusters, so the two are
 directly comparable: read-through working set from each key's **first non-zero
 get**, complete traces streamed in one pass, no sampling or truncation.
 
-**Status: 5 of 8 datasets complete.** This document is regenerated as each
+**Status: 8 of 8 datasets complete.** This document is regenerated as each
 lands; figures for finished datasets are final.
 
 ## Provenance
@@ -90,10 +90,10 @@ legitimate design point, but it should be stated rather than assumed, and a
 | `kvcache_202210` | 1,301,094,881 | 16,428,431 | **25.78 GiB** | 1,684 B | 29 B |
 | `kvcache_202401` | 995,580,106 | 14,757,964 | **18.92 GiB** | 1,376 B | 25 B |
 | `kvcache_flat_202312` | 7,967,466,833 | 74,145,149 | **103.37 GiB** | 1,496 B | 13 B |
-| `memcache_202408` | *pending* | | | | |
+| `memcache_202408` | 451,728,352 | 6,198,138 | **9.42 GiB** | 1,631 B | 24 B |
 | `storage_block_202312` **[not comparable]** | 44,728,210 | 16,597,456 | **61015.38 GiB** | 3,947,277 B | 2,121,728 B |
-| `cdn_202303` | *pending* | | | | |
-| `cdn_bigcache_202504` | *pending* | | | | |
+| `cdn_202303` **[not comparable]** | 248,775,964 | 86,190,527 | **25490.63 GiB** | 317,556 B | 30,350 B |
+| `cdn_bigcache_202504` **[not comparable]** | 196,878,105 | 22,271,394 | **2344.68 GiB** | 113,040 B | 37,705 B |
 
 
 ### `storage_block_202312` is reported but not comparable
@@ -107,9 +107,27 @@ MB for a 61,015 GiB working set, against a documented 95 MiB scaled SSD tier
 -- is an artifact of the mismatch, not a measurement. Re-running with
 `(block_id, io_offset)` as the key would give a real answer.
 
-It is excluded from totals. The same check is owed to the CDN datasets
-before they are used: `--fmt=cdn` keys on one column and takes another as
-the size, and neither assumption has been validated against the files.
+Excluded from all totals.
+
+### `cdn_202303` is reported but not comparable
+
+The converter reads `responseSize` as the object size, but that is the size
+of one response: 18.8% of requests are range requests, 12% of rows return
+less than the object's own size, and 43.8% of repeat accesses to the same
+cacheKey report a *different* responseSize. So "the first non-zero size" is
+not the object's size. The file carries the right column -- `objectSize`,
+populated on 99.7% of rows, mean 10.4 MB against responseSize's 531 KB -- so
+re-running with `I_SIZE=3` would give a real answer, roughly 20x larger.
+
+Excluded from all totals.
+
+### `cdn_bigcache_202504` is reported but not comparable
+
+Same defect as `cdn_202303`: sized on `responseSize` rather than
+`objectSize`, so range requests and partial responses make the recorded
+first size unrelated to what the cache would hold.
+
+Excluded from all totals.
 
 ## Operation mix
 
@@ -124,10 +142,10 @@ is `distinct / accesses`, reached only at infinite capacity.
 | `kvcache_202210` | 0.831:0.169 | 20.6% of gets | 0.987:0.013 | 0.0126 |
 | `kvcache_202401` | 0.789:0.211 | 29.3% of gets | 0.985:0.015 | 0.0148 |
 | `kvcache_flat_202312` | 0.865:0.135 | 15.8% of gets | 0.991:0.009 | 0.0093 |
-| `memcache_202408` | *pending* | | | |
+| `memcache_202408` | 0.826:0.174 | 24.1% of gets | 0.986:0.014 | 0.0137 |
 | `storage_block_202312` | 0.637:0.363 | 0.0% of gets | 0.629:0.371 | 0.3711 |
-| `cdn_202303` | *pending* | | | |
-| `cdn_bigcache_202504` | *pending* | | | |
+| `cdn_202303` | 1.000:0.000 | 0.1% of gets | 0.654:0.346 | 0.3465 |
+| `cdn_bigcache_202504` | 1.000:0.000 | 0.1% of gets | 0.887:0.113 | 0.1131 |
 
 ### Meta's reuse is an order of magnitude better than Twitter's
 
@@ -158,7 +176,13 @@ once at its fill size, and its sum is the WSS column above.
 |  | object | 8 | 9 | 25 | 67 | 585 | 2,582 | 12,305 | 420,582 |
 | `kvcache_flat_202312` | access | 8 | 10 | 50 | 147 | 489 | 1,913 | 11,425 | 42,867 |
 |  | object | 8 | 9 | 13 | 68 | 757 | 3,224 | 11,000 | 523,288 |
+| `memcache_202408` | access | 9 | 13 | 84 | 369 | 1,291 | 5,334 | 42,545 | 161,134 |
+|  | object | 9 | 10 | 24 | 94 | 472 | 1,592 | 17,646 | 419,429 |
 | `storage_block_202312` | access | 53 | 839,680 | 2,093,056 | 2,187,264 | 8,388,608 | 8,388,608 | 8,388,608 | 8,388,608 |
 |  | object | 159 | 929,570 | 2,121,728 | 8,388,608 | 8,388,608 | 8,388,608 | 8,388,608 | 8,388,608 |
+| `cdn_202303` | access | 217 | 6,439 | 35,508 | 158,543 | 1,001,076 | 1,865,922 | 7,697,304 | 67,038,755 |
+|  | object | 557 | 10,195 | 30,350 | 106,914 | 415,848 | 1,001,617 | 5,189,576 | 67,038,755 |
+| `cdn_bigcache_202504` | access | 1,470 | 15,375 | 48,183 | 140,703 | 461,031 | 789,823 | 1,889,958 | 4,629,264 |
+|  | object | 1,770 | 16,152 | 37,705 | 90,821 | 232,004 | 400,890 | 1,217,698 | 4,708,512 |
 
 All sizes are **base 2**: 1 KiB = 1024 B, 1 MiB = 1024 KiB, 1 GiB = 1024 MiB.
