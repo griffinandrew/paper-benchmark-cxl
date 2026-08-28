@@ -226,6 +226,97 @@ hot path.
 generations of optimization while the baseline stayed frozen, and that
 staleness alone manufactured an 18% win for the proposed system.
 
+## The compact matrix, re-measured
+
+Full traces, `get()` path, `segregated_value_arena` enabled on BOTH sides so
+allocator hygiene is equal, u64 keys, `FAST_TIER_GB=4.0`, 12 GB, one client.
+These replace the pre-2026-08-28 compact numbers, which carried all three
+artifacts described above.
+
+### cluster13 (151,075,072 records)
+
+| config | p50 | p75 | p90 | p99 | GET mean | SET p50 | SET mean | miss | objects |
+|---|---|---|---|---|---|---|---|---|---|
+| flat `lru-compact` | 256 | 845 | 2017 | **8711** | **895** | 736 | 2968 | 0.4797 | 1,911,194 |
+| flat `lfu-compact` | 222 | 498 | 1303 | **6470** | **642** | 788 | 2882 | 0.5595 | 4,319,895 |
+| hybr `lru-compact` | 272 | 952 | 2729 | 19866 | 1445 | 815 | 4345 | 0.4797 | 1,955,425 |
+| hybr `lfu-compact` | 229 | 519 | 1431 | 7221 | 712 | 920 | 3010 | 0.5552 | 4,415,055 |
+
+### cluster53 (167,242,141 records)
+
+| config | p50 | p75 | p90 | p99 | GET mean | SET p50 | SET mean | miss | objects |
+|---|---|---|---|---|---|---|---|---|---|
+| flat `lru-compact` | 2170 | 5089 | 7874 | **13196** | **3378** | 2145 | 8004 | 0.0124 | 886,669 |
+| flat `lfu-compact` | 2225 | 5147 | 7854 | 13227 | 3399 | 1118 | **4120** | 0.0268 | 845,071 |
+| hybr `lru-compact` | 2268 | 5425 | 8361 | 17606 | 3740 | 2235 | 6520 | 0.0122 | 902,774 |
+| hybr `lfu-compact` | 2314 | 5471 | 8349 | 15934 | 3655 | 1844 | 4696 | 0.0256 | 858,731 |
+
+### Tier migration
+
+| cell | fast objs | slow objs | promotions | demotions | ratio |
+|---|---|---|---|---|---|
+| c13 hybr `lru-compact` | 555,029 | 1,400,396 | **715** | 71,918,955 | 1 : 100,585 |
+| c13 hybr `lfu-compact` | 1,157,938 | 3,257,117 | 1,985,507 | 1,411,042 | 1.4 : 1 |
+| c53 hybr `lru-compact` | 252,839 | 649,935 | 4,480,376 | 6,261,592 | 1 : 1.4 |
+| c53 hybr `lfu-compact` | 230,484 | 628,247 | 451,879 | 469,783 | 1 : 1.04 |
+
+**Flat wins both traces at every percentile**, by 8-38% on the mean depending on
+workload. That is the post-remedy replacement for the original "tiered wins by
+18%".
+
+## Workload structure, and four caveats it forces
+
+The two clusters are opposite regimes, and almost every policy result below
+follows from that rather than from the policies.
+
+| | cluster13 | cluster53 |
+|---|---|---|
+| mean accesses / object | **1.96** | **13.92** |
+| max accesses to one key | **16** | **105,095** |
+| objects touched <= 2x | 79.6% of objects, **54.5% of accesses** | 56.8% of objects, **5.3% of accesses** |
+| accesses from objects touched > 12x | **0.00%** | **82.4%** |
+| median reuse distance | **5 records** | -- |
+| compulsory miss floor | 0.4797 | 0.0098 |
+
+### 1. cluster13 cannot evaluate tiering at all
+
+Its median reuse distance is **5 records** against a fast-tier residency window
+of ~1,100,076 records, so **100.00%** of reuses (all but 28 of 2,972,779) land
+while the object is STILL in the fast tier. A promotion is never needed. That
+predicts ~740 promotions over the full run; 715 were observed, within 3.5%.
+
+So on cluster13 the hybrid pays the full demotion cost -- 71.9M object copies to
+CXL -- with the promotion benefit pinned at zero by the workload's structure.
+Its 38% deficit measures tiering OVERHEAD in isolation and is not evidence
+about tiering as a design. Tiering claims need cluster53, where reuse spreads
+out and 4.5M real promotions occur.
+
+### 2. Cross-policy latency is confounded by retained object size
+
+At the same 12 GB, `lfu-compact` holds 4,319,895 objects against
+`lru-compact`'s 1,911,194 -- 2.3x more -- because frequency ranking selects the
+small end of a 45x-skewed size distribution (LFU's p75 HIT is 123 B; LRU's is
+1,872 B). LFU's better GET mean (642 vs 895 ns) is therefore mostly "it serves
+smaller objects", not "it is faster": total operation time is
+`78.6M x 895 + 72.5M x 2968 = 285.4 s` against
+`66.6M x 642 + 84.5M x 2882 = 286.3 s` -- **0.3% apart**. Condition on size, or
+report total time.
+
+### 3. The margin varies 8-38%, and the largest is the least meaningful
+
+Flat wins both traces, but the quotable figure is cluster53's 8-11%, not
+cluster13's 38%, for the reason in caveat 1.
+
+### 4. Which policy wins is a property of the trace
+
+LFU loses on cluster13 (miss 0.5595 vs 0.4797 -- nothing to rank on, max 16
+accesses) and wins on cluster53 (SET mean 4120 vs 8004 flat, and 10x less
+migration churn in the hybrid: 452K promotions vs LRU's 4.48M). Reporting an
+LRU-vs-LFU verdict without stating the reuse structure generalises an artifact
+of trace selection. Note also that LRU on cluster13 sits exactly AT the
+compulsory miss floor (72,473,279 fills against 72,472,986 distinct keys, +293),
+so no policy can beat it there -- only match it.
+
 ## Reproduction
 
 Feature sets were recovered from cargo fingerprints rather than reconstructed
