@@ -377,9 +377,16 @@ impl PaperCacheBackend {
         let policy = match std::env::var("PAPER_POLICY").ok().as_deref() {
             Some("fifo") => PaperPolicy::Fifo,
             Some("lru") => PaperPolicy::Lru,
+            Some("lru-compact") => PaperPolicy::LruCompact,
+            Some("lfu-compact") => PaperPolicy::LfuCompact,
             Some("s3-fifo") | Some("s3fifo") => PaperPolicy::SThreeFifo(ratio),
             Some("2q") | Some("two-q") => PaperPolicy::TwoQ(ratio, k_out),
-            _ => PaperPolicy::Lfu,
+            Some("lfu") | None => PaperPolicy::Lfu,
+            // Was `_ => PaperPolicy::Lfu`, which silently ran a DIFFERENT
+            // policy than the one named: a typo or an unregistered name
+            // produced a full, plausible result attributed to the wrong
+            // design.
+            Some(other) => panic!("PAPER_POLICY={} is unknown to this backend", other),
         };
         let cache = PaperCache::<u64, Box<[u8]>>::new(max_size, &[policy], policy)
             .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
