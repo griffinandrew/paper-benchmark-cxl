@@ -24,7 +24,7 @@ pub struct Access {
 	pub timestamp: u64,
 	pub command: Command,
 
-	pub key: String,
+	pub key: u64,
 	pub value: Box<[u8]>,
 
 	pub ttl: Option<u32>,
@@ -51,9 +51,11 @@ impl ReadChunk for Access {
 		let command_byte = rdr.read_u8()?;
 		let command = Command::from_byte(command_byte)?;
 
-		let key = rdr
-			.read_u64::<LittleEndian>()?
-			.to_string();
+		// The record's key IS a u64. It used to be .to_string()'d here and
+		// parse::<u64>()'d back inside the timed GET path; the String's heap
+		// read there was allocator-placement-sensitive and manufactured a
+		// ~150-200 ns per-op difference between builds. See the findings doc.
+		let key = rdr.read_u64::<LittleEndian>()?;
 
 		let value_size = rdr.read_u32::<LittleEndian>()?;
 		let value: Box<[u8]> = [0u8].repeat(value_size as usize).into();
@@ -89,9 +91,7 @@ impl ReadChunk for Access {
 
 impl WriteChunk for Access {
 	fn as_chunk(&self, buf: &mut Vec<u8>) -> io::Result<()> {
-		let key = self.key
-			.parse::<u64>()
-			.expect("Invalid access key.");
+		let key = self.key;
 
 		let size = self.value.len() as u32;
 

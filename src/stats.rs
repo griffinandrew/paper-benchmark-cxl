@@ -52,6 +52,12 @@ pub struct Stats {
 	get_total_size: u64,
 	set_total_size: u64,
 
+	/// Uniform reservoir of returned GET sizes (Algorithm R, same cap as the
+	/// latency reservoirs). A mean size is misleading on skewed traces --
+	/// cluster13 is p50 123 B against a mean 5,606 B -- so the percentiles are
+	/// what make two configs' GET latencies comparable.
+	get_size_samples: Vec<u64>,
+
 	/// Cap on retained latency samples per operation type. `0` means
 	/// unbounded, which is the historical behavior and stays the default so
 	/// nothing changes for traces small enough not to care.
@@ -197,6 +203,18 @@ impl Stats {
 
 	pub fn store_get_size(&mut self, size: u64) {
 		self.get_total_size += size;
+
+		// Same Algorithm R as `record`, over hit sizes.
+		let cap = self.max_samples;
+		if cap == 0 || self.get_size_samples.len() < cap {
+			self.get_size_samples.push(size);
+		} else {
+			let seen = self.get_seen.max(1);
+			let r = (self.next_rand() % seen) as usize;
+			if r < cap {
+				self.get_size_samples[r] = size;
+			}
+		}
 	}
 
 	/// Uniformly reduces one sample set to `cap` entries, by repeatedly
@@ -255,8 +273,30 @@ impl Stats {
 		// exactly the sampling ratio.
 		let avg_size = (self.get_total_size as f64 / self.get_seen.max(1) as f64) as u64;
 
+		// Size DISTRIBUTION of hits. Printed beside the mean because on a
+		// skewed trace the two say very different things, and because a
+		// latency percentile is only comparable across configs when the
+		// corresponding size percentile is too.
+		let size_line = {
+			let mut s = self.get_size_samples.clone();
+			if s.is_empty() {
+				String::new()
+			} else {
+				s.sort_unstable();
+				let q = |f: f64| -> u64 {
+					let i = ((s.len() as f64 - 1.0) * f).round() as usize;
+					s[i.min(s.len() - 1)]
+				};
+				format!(
+					"GET size pcts:\tp1 {} | p25 {} | p50 {} | p75 {} | p90 {} | p99 {} B  (n={})\n",
+					q(0.01), q(0.25), q(0.50), q(0.75), q(0.90), q(0.99), s.len()
+				)
+			}
+		};
+
 		println!(
-			"Avg GET size:\t{} ({} B)",
+			"{}Avg GET size:\t{} ({} B)",
+			size_line,
 			fmt::memory(avg_size, Some(2)),
 			fmt::number(avg_size),
 		);
@@ -520,6 +560,7 @@ impl AddAssign for Stats {
 		self.set_latencies.extend(rhs.set_latencies);
 
 		self.get_total_size += rhs.get_total_size;
+		self.get_size_samples.extend_from_slice(&rhs.get_size_samples);
 		self.set_total_size += rhs.set_total_size;
 
 		// Merging two reservoirs can overshoot the cap; trim uniformly at

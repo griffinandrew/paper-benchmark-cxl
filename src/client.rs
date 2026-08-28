@@ -107,7 +107,7 @@ impl BenchmarkClient {
 			Command::Get => {
 				let start_time = Instant::now();
 
-				match self.client.get(&access.key) {
+				match self.client.get(access.key) {
 					Ok(value) => {
 						self.stats.store_get_time(start_time);
 
@@ -149,7 +149,7 @@ impl BenchmarkClient {
 
 		let get_start_time = Instant::now();
 
-		match self.client.get(&access.key) {
+		match self.client.get(access.key) {
 			Ok(value) => {
 				self.stats.store_get_time(get_start_time);
 
@@ -362,7 +362,7 @@ impl BenchmarkClient {
             Command::Get => {
                 let start_time = Instant::now();
 
-                match self.client.get(&access.key) {
+                match self.client.get(access.key) {
                     Ok(Some(value)) => {
                         self.stats.store_get_time(start_time);
 
@@ -405,7 +405,7 @@ impl BenchmarkClient {
 
         let get_start_time = Instant::now();
 
-        match self.client.get(&access.key) {
+        match self.client.get(access.key) {
             Ok(Some(value)) => {
                 self.stats.store_get_time(get_start_time);
 
@@ -448,10 +448,3 @@ impl Display for ClientType {
         write!(f, "{s}")
     }
 }
-
-
-
-
-
-
-

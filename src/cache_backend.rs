@@ -75,15 +75,15 @@ impl CacheBackend for PaperClientBackend {
 }
 
 /// Adapter around your in-process paper_cache library.
-/// Uses PaperCache<u64, Box<[u8]>> internally and converts to/from Vec<u8> for the trait.
+/// Uses PaperCache<u64, paper_cache::BufferDRAM> internally and converts to/from Vec<u8> for the trait.
 pub struct PaperCacheBackend {
-    inner: PaperCache<u64, Box<[u8]>>,
+    inner: PaperCache<u64, paper_cache::BufferDRAM>,
 }
 
 impl PaperCacheBackend {
     pub fn new(max_size: u64) -> Result<Self, Box<dyn Error + Send + Sync>> {
         // default to a single LFU policy; adjust if you want CLI policy selection
-        let cache = PaperCache::<u64, Box<[u8]>>::new(max_size, &[PaperPolicy::Lfu], PaperPolicy::Lfu)
+        let cache = PaperCache::<u64, paper_cache::BufferDRAM>::new(max_size, &[PaperPolicy::Lfu], PaperPolicy::Lfu)
             .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
         Ok(PaperCacheBackend { inner: cache })
     }
@@ -96,7 +96,7 @@ impl CacheBackend for PaperCacheBackend {
     }
 
     fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>, Box<dyn Error + Send + Sync>> {
-        let key_u64 = key.parse::<u64>().map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+        let key_u64 = key;
 
         match self.inner.get(&key_u64) {
             Ok(boxed) => {
@@ -111,7 +111,7 @@ impl CacheBackend for PaperCacheBackend {
     }
 
     fn set(&mut self, key: String, value: Vec<u8>, ttl: Option<u32>) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let key_u64 = key.parse::<u64>().map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+        let key_u64 = key;
         let boxed: Box<[u8]> = value.into_boxed_slice();
         self.inner.set(key_u64, &boxed, ttl).map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)
     }
@@ -164,8 +164,9 @@ use paper_cache::{TieredBuffer, CacheTierSize};
 // CacheBackend>` is only `Send`/`Sync` itself if the trait object is.
 pub trait CacheBackend: Send + Sync {
     fn ping(&self) -> Result<(), Box<dyn Error + Send + Sync>>;
-    fn get(&self, key: &str) -> Result<Option<Vec<u8>>, Box<dyn Error + Send + Sync>>;
-    fn set(&self, key: String, value: Box<[u8]>, ttl: Option<u32>) -> Result<(), Box<dyn Error + Send + Sync>>;
+    fn get(&self, key: u64) -> Result<Option<Vec<u8>>, Box<dyn Error + Send + Sync>>;
+
+    fn set(&self, key: u64, value: Box<[u8]>, ttl: Option<u32>) -> Result<(), Box<dyn Error + Send + Sync>>;
     fn wipe(&self) -> Result<(), Box<dyn Error + Send + Sync>>;
     fn auth(&self, token: &str) -> Result<(), Box<dyn Error + Send + Sync>>;
 
@@ -233,14 +234,14 @@ pub struct HybridStatsSnapshot {
 }
 
 /// Adapter around your in-process paper_cache library.
-/// Uses PaperCache<u64, Box<[u8]>> internally and converts to/from Vec<u8> for the trait.
+/// Uses PaperCache<u64, paper_cache::BufferDRAM> internally and converts to/from Vec<u8> for the trait.
 
 //this will be all_dram config..... need alternative for pmem//// 
 //#[cfg(not(feature = "allocator_api",feature = "hybrid" ))]
 
 #[cfg(not(any(feature = "allocator_api", feature = "hybrid", feature = "hybrid_lfu", feature = "hybrid_2q", feature = "hybrid_2q_fast_admission", feature = "hybrid_2q_fast_admission_reprieve", feature = "hybrid_fifo", feature = "hybrid_lru_sized", feature = "hybrid_s3_fifo", feature = "hybrid_2q_ghost", feature = "hybrid_s3_fifo_ghost", feature = "hybrid_s3_fifo_ghost_lazy_demotion", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission", feature = "hybrid_s3_fifo_ghost_lazy_demotion_fast_admission_midpoint", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_midpoint_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_reprieve", feature = "hybrid_s3_fifo_lazy_demotion_fast_admission_split_slow_reprieve", feature = "hybrid_lru_lfu")))]
 pub struct PaperCacheBackend {
-    inner: PaperCache<u64, Box<[u8]>>,
+    inner: PaperCache<u64, paper_cache::BufferDRAM>,
 }
 
 #[cfg(feature = "allocator_api")]
@@ -356,7 +357,7 @@ impl PaperCacheBackend {
 /*
 #[cfg(feature = "allocator_api")]
 pub struct PaperCacheBackend {
-    inner: PaperCache<u64, Box<[u8]>>,
+    inner: PaperCache<u64, paper_cache::BufferDRAM>,
 }
 */
 
@@ -388,7 +389,7 @@ impl PaperCacheBackend {
             // design.
             Some(other) => panic!("PAPER_POLICY={} is unknown to this backend", other),
         };
-        let cache = PaperCache::<u64, Box<[u8]>>::new(max_size, &[policy], policy)
+        let cache = PaperCache::<u64, paper_cache::BufferDRAM>::new(max_size, &[policy], policy)
             .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
         Ok(PaperCacheBackend { inner: cache })
     }
@@ -415,8 +416,8 @@ impl CacheBackend for PaperCacheBackend {
         Ok(())
     }
 
-    fn get(&self, key: &str) -> Result<Option<Vec<u8>>, Box<dyn Error + Send + Sync>> {
-        let key_u64 = key.parse::<u64>().map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+    fn get(&self, key: u64) -> Result<Option<Vec<u8>>, Box<dyn Error + Send + Sync>> {
+        let key_u64 = key;
 
         match self.inner.get(&key_u64) {
             Ok(boxed) => {
@@ -431,8 +432,8 @@ impl CacheBackend for PaperCacheBackend {
         }
     }
 
-    fn set(&self, key: String, value: Box<[u8]>, ttl: Option<u32>) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let key_u64 = key.parse::<u64>().map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+    fn set(&self, key: u64, value: Box<[u8]>, ttl: Option<u32>) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let key_u64 = key;
         //let boxed: Box<[u8]> = value.into_boxed_slice();
 
         #[cfg(feature = "value_dram")] {
@@ -525,5 +526,3 @@ impl CacheBackend for PaperCacheBackend {
     }
 
 }
-
-
