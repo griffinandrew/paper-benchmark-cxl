@@ -166,6 +166,20 @@ pub trait CacheBackend: Send + Sync {
     fn ping(&self) -> Result<(), Box<dyn Error + Send + Sync>>;
     fn get(&self, key: u64) -> Result<Option<Vec<u8>>, Box<dyn Error + Send + Sync>>;
 
+    /// Copies a hit into `out` and returns whether there was one, instead of
+    /// allocating a fresh `Vec` per call. Diagnostic -- see
+    /// `PaperCache::get_into`. The default implementation falls back to `get`
+    /// so a backend that cannot avoid the allocation still compiles and runs.
+    fn get_into(&self, key: u64, out: &mut Vec<u8>) -> Result<bool, Box<dyn Error + Send + Sync>> {
+        match self.get(key)? {
+            Some(value) => {
+                out.clear();
+                out.extend_from_slice(&value);
+                Ok(true)
+            },
+            None => Ok(false),
+        }
+    }
     fn set(&self, key: u64, value: Box<[u8]>, ttl: Option<u32>) -> Result<(), Box<dyn Error + Send + Sync>>;
     fn wipe(&self) -> Result<(), Box<dyn Error + Send + Sync>>;
     fn auth(&self, token: &str) -> Result<(), Box<dyn Error + Send + Sync>>;
@@ -416,6 +430,33 @@ impl CacheBackend for PaperCacheBackend {
         Ok(())
     }
 
+    fn get_into(&self, key: u64, out: &mut Vec<u8>) -> Result<bool, Box<dyn Error + Send + Sync>> {
+        let prof = wp_enabled()
+            && WP_TICK.with(|c| {
+                let t = c.get();
+                c.set(t.wrapping_add(1));
+                t & 63 == 0
+            });
+        let w0 = if prof { Some(std::time::Instant::now()) } else { None };
+
+        let key_u64 = key;
+        let w1 = if prof { Some(std::time::Instant::now()) } else { None };
+
+        let r = self.inner.get_into(&key_u64, out);
+        if let (Some(w0), Some(w1), true) = (w0, w1, r.is_ok()) {
+            let w2 = std::time::Instant::now();
+            if let Ok(mut v) = WP_PI.lock() {
+                v.push([(w1 - w0).as_nanos() as u64, (w2 - w1).as_nanos() as u64]);
+            }
+        }
+
+        match r {
+            Ok(()) => Ok(true),
+            Err(PcError::KeyNotFound) => Ok(false),
+            Err(other) => Err(Box::new(other) as Box<dyn Error + Send + Sync>),
+        }
+    }
+
     fn get(&self, key: u64) -> Result<Option<Vec<u8>>, Box<dyn Error + Send + Sync>> {
         let key_u64 = key;
 
@@ -525,4 +566,55 @@ impl CacheBackend for PaperCacheBackend {
         })
     }
 
+}
+
+
+
+
+// ---------------------------------------------------------------------------
+// Wrapper-bisection probe (WRAPPER_PROFILE=1). The library measured its two
+// builds IDENTICAL inside get_into while the benchmark medians differ ~200 ns;
+// this locates the difference within the harness wrapper itself.
+// ---------------------------------------------------------------------------
+
+/// Sampled [parse_ns, inner_call_ns] per hit.
+pub static WP_PI: std::sync::Mutex<Vec<[u64; 2]>> = std::sync::Mutex::new(Vec::new());
+/// Sampled full bracketed hit time (benchmark timer to after store_get_time).
+pub static WP_TOTAL: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
+
+thread_local! {
+    pub static WP_TICK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+pub fn wp_enabled() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("WRAPPER_PROFILE").map(|v| v == "1").unwrap_or(false))
+}
+
+/// Prints and drains the probe. Second call is a no-op.
+pub fn wp_report() {
+    if !wp_enabled() {
+        return;
+    }
+    let pct = |xs: &mut Vec<u64>, f: f64| -> u64 {
+        if xs.is_empty() {
+            return 0;
+        }
+        xs.sort_unstable();
+        xs[(((xs.len() - 1) as f64) * f).round() as usize]
+    };
+    let pi: Vec<[u64; 2]> = std::mem::take(&mut *WP_PI.lock().unwrap());
+    let mut tot: Vec<u64> = std::mem::take(&mut *WP_TOTAL.lock().unwrap());
+    if pi.is_empty() && tot.is_empty() {
+        return;
+    }
+    let mut parse: Vec<u64> = pi.iter().map(|s| s[0]).collect();
+    let mut inner: Vec<u64> = pi.iter().map(|s| s[1]).collect();
+    eprintln!(
+        "WPROF n={} parse[p25={} p50={} p75={} p90={}] inner[p25={} p50={} p75={} p90={}] bracket[p25={} p50={} p75={} p90={}]",
+        pi.len(),
+        pct(&mut parse, 0.25), pct(&mut parse, 0.50), pct(&mut parse, 0.75), pct(&mut parse, 0.90),
+        pct(&mut inner, 0.25), pct(&mut inner, 0.50), pct(&mut inner, 0.75), pct(&mut inner, 0.90),
+        pct(&mut tot, 0.25), pct(&mut tot, 0.50), pct(&mut tot, 0.75), pct(&mut tot, 0.90),
+    );
 }

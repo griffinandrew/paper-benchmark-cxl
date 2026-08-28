@@ -172,6 +172,7 @@ fn main() {
 	}
 
 	stats.print_ping_stats();
+	crate::cache_backend::wp_report();
 	stats.print_get_stats();
 	stats.print_set_stats();
 
@@ -405,6 +406,8 @@ fn main() {
     }
 
     stats.print_ping_stats();
+crate::cache_backend::wp_report();
+    crate::cache_backend::wp_report();
     stats.print_get_stats();
     stats.print_set_stats();
 
@@ -998,6 +1001,7 @@ fn main() {
     stats.sort_by_time();
 
     stats.print_ping_stats();
+    crate::cache_backend::wp_report();
     stats.print_get_stats();
     stats.print_set_stats();
 

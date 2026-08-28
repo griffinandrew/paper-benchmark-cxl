@@ -403,6 +403,38 @@ impl BenchmarkClient {
             return Ok(());
         }
 
+        // USE_GET_INTO=1 takes the per-GET allocation off the measured path by
+        // copying into one reused buffer. Diagnostic only: it measures the
+        // cache's read cost with the allocator's contribution removed, so the
+        // difference between the two modes IS the allocation term.
+        if use_get_into() {
+            let get_start_time = Instant::now();
+            let hit = GET_BUF.with(|b| self.client.get_into(access.key, &mut b.borrow_mut()))?;
+
+            if hit {
+                self.stats.store_get_time(get_start_time);
+                // Wrapper probe: the same bracketed span the benchmark medians,
+                // sampled on the backend's cadence (its tick advanced this op).
+                if crate::cache_backend::wp_enabled()
+                    && crate::cache_backend::WP_TICK.with(|c| c.get() & 63 == 1)
+                {
+                    if let Ok(mut v) = crate::cache_backend::WP_TOTAL.lock() {
+                        v.push(get_start_time.elapsed().as_nanos() as u64);
+                    }
+                }
+                let len = GET_BUF.with(|b| b.borrow().len());
+                self.stats.store_get_size(len as u64);
+            } else {
+                let size = access.value.len() as u64;
+                let set_start_time = Instant::now();
+                self.client.set(access.key, access.value, access.ttl)?;
+                self.stats.store_set_time(set_start_time);
+                self.stats.store_set_size(size);
+            }
+
+            return Ok(());
+        }
+
         let get_start_time = Instant::now();
 
         match self.client.get(access.key) {
@@ -447,4 +479,26 @@ impl Display for ClientType {
 
         write!(f, "{s}")
     }
+}
+
+
+
+
+
+
+
+
+
+thread_local! {
+    /// One reusable destination buffer per client thread for the `USE_GET_INTO`
+    /// path. Grows to the largest value seen and then stops allocating, which
+    /// is the entire point: it removes malloc from the measured region.
+    static GET_BUF: std::cell::RefCell<Vec<u8>> =
+        std::cell::RefCell::new(Vec::with_capacity(1 << 20));
+}
+
+/// Whether to measure through `get_into` instead of `get`. Read once.
+fn use_get_into() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("USE_GET_INTO").map(|v| v == "1").unwrap_or(false))
 }
