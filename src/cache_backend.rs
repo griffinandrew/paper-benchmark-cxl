@@ -397,11 +397,22 @@ impl PaperCacheBackend {
             Some("s3-fifo") | Some("s3fifo") => PaperPolicy::SThreeFifo(ratio),
             Some("2q") | Some("two-q") => PaperPolicy::TwoQ(ratio, k_out),
             Some("lfu") | None => PaperPolicy::Lfu,
-            // Was `_ => PaperPolicy::Lfu`, which silently ran a DIFFERENT
-            // policy than the one named: a typo or an unregistered name
-            // produced a full, plausible result attributed to the wrong
-            // design.
-            Some(other) => panic!("PAPER_POLICY={} is unknown to this backend", other),
+            // Everything else is handed to the library's own parser, so any
+            // policy `PaperPolicy` knows is runnable by its canonical string
+            // ("fifo-compact", "2q-compact-0.25-0.5", "s3-fifo-compact-0.1",
+            // ...) without needing an arm added here. The shorthand arms above
+            // are kept because they take their ratios from
+            // PAPER_POLICY_RATIO/PAPER_POLICY_K_OUT rather than from the name.
+            //
+            // This replaced a hand-maintained allowlist that four already-
+            // landed flat policies were missing, so they could not be run at
+            // all. It still panics on a name the parser also rejects: the
+            // original `_ => PaperPolicy::Lfu` silently ran a DIFFERENT policy
+            // than the one named, producing a full, plausible result
+            // attributed to the wrong design.
+            Some(other) => other.parse::<PaperPolicy>().unwrap_or_else(|_| {
+                panic!("PAPER_POLICY={other} is unknown to this backend and not a policy string")
+            }),
         };
         let cache = PaperCache::<u64, paper_cache::BufferDRAM>::new(max_size, &[policy], policy)
             .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
