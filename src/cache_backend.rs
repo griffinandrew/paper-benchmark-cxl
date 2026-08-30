@@ -340,20 +340,30 @@ impl PaperCacheBackend {
         };
 
         let cache = match policy {
-            // The size-split design takes three sizing scalars: split the
-            // fast budget evenly, threshold from SIZED_THRESHOLD (bytes).
-            PaperPolicy::LruSizedHybrid => {
+            // The size-split designs take three sizing scalars rather than
+            // one, so they need their own constructor: split the fast budget
+            // evenly, threshold from SIZED_THRESHOLD (bytes).
+            //
+            // BOTH variants must be named here. `PaperCache::new` rejects
+            // either of them outright (lib.rs:2170), so a missing arm is not a
+            // silently-wrong result but a hard `InvalidPolicy` at startup --
+            // which is exactly what `lru-sized-compact-hybrid` did until this
+            // arm learned about it, while `lru-sized-hybrid` worked fine.
+            PaperPolicy::LruSizedHybrid | PaperPolicy::LruSizedCompactHybrid => {
                 let half_mib = fast_tier_mib / 2;
                 let threshold: u64 = std::env::var("SIZED_THRESHOLD")
                     .ok()
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(16384);
-                PaperCache::<u64, TieredBuffer>::new_sized(
-                    max_size,
-                    CacheTierSize::Mib(half_mib),
-                    CacheTierSize::Mib(half_mib),
-                    CacheTierSize::Bytes(threshold),
-                )
+                let small = CacheTierSize::Mib(half_mib);
+                let large = CacheTierSize::Mib(half_mib);
+                let cut = CacheTierSize::Bytes(threshold);
+
+                if matches!(policy, PaperPolicy::LruSizedCompactHybrid) {
+                    PaperCache::<u64, TieredBuffer>::new_sized_compact(max_size, small, large, cut)
+                } else {
+                    PaperCache::<u64, TieredBuffer>::new_sized(max_size, small, large, cut)
+                }
             },
 
             policy => PaperCache::<u64, TieredBuffer>::new(
