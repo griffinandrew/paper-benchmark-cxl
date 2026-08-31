@@ -331,6 +331,57 @@ SETs on both arms. cluster53 differs by exactly one access
 evidence behind section 5.1: LRU self-corrects from a perturbation, LFU's
 path-dependent frequency counters do not.
 
+### 2.6 Figures
+
+Both comparisons, both policies, plotted across the latency distribution rather
+than at the three points sections 2.1-2.4 quote. Log y-axis; percentages are the
+variant against the baseline; green means the variant is faster.
+
+#### Tiering cost: all-DRAM vs hybrid
+
+![LRU compact, all-DRAM vs tiered](figures/fig_lru_flat_vs_hybrid.svg)
+
+![LFU compact, all-DRAM vs tiered](figures/fig_lfu_flat_vs_hybrid.svg)
+
+#### Eviction-stack placement cost: DRAM vs CXL, tiered design
+
+![LRU compact hybrid, stacks in DRAM vs CXL](figures/fig_lru_hybrid_stacks_dram_vs_cxl.svg)
+
+![LFU compact hybrid, stacks in DRAM vs CXL](figures/fig_lfu_hybrid_stacks_dram_vs_cxl.svg)
+
+**The shape is the finding, and the two pairs have different shapes.**
+
+The tiering penalty **grows monotonically with the percentile**. LRU on
+cluster13 runs +6% at p50, +35% at p90, +128% at p99 and +251% at p99.9. The
+median GET is barely affected; the cost is almost entirely in the tail, and the
+mean (+61%) sits where it does only because cluster13's payload distribution is
+38x skewed (p50 123 B against a 4,656 B mean), so the mean tracks the same large
+requests the tail is made of. Reading the mean alone overstates what a typical
+request experiences by an order of magnitude, and reading p50 alone understates
+the cost by the same.
+
+The stack-placement penalty is **small and roughly flat**: 0-22% across the
+whole distribution on cluster13 and 0-4% on cluster53, with no growth into the
+tail. That is what a fixed per-operation cost on the policy worker looks like,
+as against tiering's cost which scales with how many bytes are moving.
+
+Two secondary readings:
+
+**Tiering can improve SET, and does so on exactly one cell.** LRU cluster53's
+SET panel is green at every percentile from p75 outward (-14% to -25%, mean
+-19%). It does not replicate on LFU cluster53, whose SET p50 is +65% -- so this
+is a policy/trace property, not a tiering property.
+
+**LFU's tiering penalty is far smaller than LRU's on cluster13** (+11% mean
+against +61%), and the migration counters say why: LFU records 1,985,507
+promotions there against LRU's 715. Same trace, same budget -- the difference is
+that frequency ranking actually identifies objects worth keeping in the fast
+tier, while recency ranking on a trace with a median reuse distance of 5 records
+promotes essentially nothing. Section 5.2 has the full accounting.
+
+Regenerate with `sweep/figs.py`; the figures read the same `.out` files as every
+table above.
+
 ---
 
 ## 3. Why: the metadata is too small to matter <a name="why"></a>
