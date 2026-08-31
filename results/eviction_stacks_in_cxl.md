@@ -360,10 +360,20 @@ requests the tail is made of. Reading the mean alone overstates what a typical
 request experiences by an order of magnitude, and reading p50 alone understates
 the cost by the same.
 
-The stack-placement penalty is **small and roughly flat**: 0-22% across the
-whole distribution on cluster13 and 0-4% on cluster53, with no growth into the
-tail. That is what a fixed per-operation cost on the policy worker looks like,
-as against tiering's cost which scales with how many bytes are moving.
+The stack-placement penalty is **small** — single-digit percent nearly
+everywhere, against tiering's 6-251% — and that order-of-magnitude gap is the
+only comparison between the two pairs this data supports.
+
+It does NOT support a claim that the penalty depends on the trace, and an
+earlier revision of this section made one. Of the eight DRAM-vs-CXL pairs only
+two are clean A/B comparisons (section 5.4), and 97.1% of the variance in the
+percentage column comes from the two contaminated LFU cluster13 cells. With
+those removed the remaining six span 0.71-2.63% — a spread no larger than this
+measurement's own reproducibility of ±2 percentage points (section 5.6). On the
+one perfectly clean pair the ordering between clusters **flips depending on
+which statistic you read**: cluster53 is worse on GET mean (2.01% vs 1.79%),
+cluster13 is worse on GET p50 (5.86% vs 2.67%) and on wall clock (0.94% vs
+0.61%).
 
 Two secondary readings:
 
@@ -492,6 +502,45 @@ The `*-compact` counterparts do honour it, because `CompactQueueSet` is
 allocator-parameterised — which is a substantive reason to prefer them beyond
 the byte saving. `arc` has no compact variant and remains unrelocatable.
 
+**5.4 Only two of the sixteen cells are clean A/B comparisons.** They are
+`flat lru-compact` on cluster13 and on cluster53: equal GET counts (off by one
+on c53), object counts equal to the digit, `Used size` within 448 B, and no fast
+tier to shift. Every other cell carries a confound.
+
+* The four **LFU** cells did not run the same workload in both arms. The CXL arm
+  served **+1.57%** (flat) and **+1.73%** (hybrid) more hits on cluster13 — about
+  7x the measured LFU run-to-run nondeterminism of 0.203% between back-to-back
+  repeats. "GET avg latency" is a mean over the hit set only, so changing which
+  accesses hit moves it with no change in per-operation cost.
+* The four **hybrid** cells carry an opposite-sign confound. The gated fast-tier
+  reservation is real and works: per-object metadata reserve falls 402.8 → 268.5
+  MiB (lru c13), 909.5 → 599.5 (lfu c13), 186.0 → 124.0 (lru c53), 176.9 → 118.1
+  (lfu c53). The CXL arm therefore serves more of its reads from DRAM, so the
+  hybrid penalties reported here are if anything **understated**.
+
+**5.5 The treatment is not a pure relocation.** `eviction_stacks_pmem` does two
+things at once: it binds eviction-stack allocations to node 1, AND it swaps
+`std::collections::HashMap` for `hashbrown::HashMap`
+(`compact_queue_set.rs:57/59`, `compact_frequency_chain.rs:43/45`), because
+`std`'s map has no custom-allocator support. Nothing here separates placement
+from data structure, and the map swap is the leading candidate for the LFU
+workload divergence in 5.4. Isolating them needs a third build with the swap and
+no NUMA binding.
+
+**5.6 The block design cannot resolve effects this small, and the noise floor is
+unmeasured.** All `rc_` cells ran 12:04-13:41, all `rp_` 16:02-16:47, all `fp_`
+17:24-18:04 on 2026-08-28: zero interleaving, n=1 per cell, arms 3.5-5.5 hours
+apart. A uniform +1-2% offset is exactly the shape a time-separated A/B
+produces. Worse, **no LRU replicate exists anywhere** in the run directory, so
+the only two clean cells have no empirical variance estimate at all. What
+variance data does exist is unflattering: `lru-compact-hybrid cluster53` measured
+across two build generations gives **-0.28% in one and +2.11% in the other** — a
+2.4 pp swing, larger than every cluster-to-cluster gap in this document.
+
+**No figure in this document should be quoted to tighter than ±2 percentage
+points.** The decisive fix is cheap: rerun the two clean cells with the arms
+interleaved (A,B,A,B,A,B), three repeats each, in one session — about 2.4 hours.
+
 ---
 
 ## 6. Pitfalls in the raw data <a name="pitfalls"></a>
@@ -567,13 +616,37 @@ by pitfall 6.1; every other field of 208 agreed.
 
 ## 8. Recommendation
 
-Do not ship `eviction_stacks_pmem`, and do not present it as a tiering result.
-It is a clean negative: the structure it relocates is 0.2-1.2% of the
-footprint, the aggregate accounting correctly refuses to hand that space back,
-and what remains is pure far-node latency on the policy worker.
+The answer differs by DESIGN, and not by trace — an earlier revision of this
+document had that backwards.
 
-The finding worth reporting from this sweep is the *asymmetry* it exposes — CXL
-is viable for cold **value bytes**, which are large and touched rarely, and not
-for **metadata**, which is small and touched on every operation. Relocating
-28 bytes per object to save DRAM costs more than it saves at every size in this
-matrix.
+**Flat designs: a strict loss. Do not ship it.** Cost is +0.54 to +0.94% of
+end-to-end wall clock, mean +0.69%, across both traces and both policies — the
+tightest and most trace-independent number in the matrix. The benefit is zero as
+measured: `get_policy_overhead` is ungated by design (section 4), so the budget
+does not grow, `Used size` stays pinned, and both LRU arms hold *identical*
+object counts. No DRAM saving is observable either — RSS matches to 0.01 GiB and
+jemalloc `allocated` to within 0.03% — though note that neither counter *can* see
+the move, since the far node is itself a NUMA-bound jemalloc arena and RSS spans
+both. The bytes do relocate; this experiment contains no evidence of what that
+buys.
+
+**Hybrid designs: a real trade-off this data cannot settle.** Cost is +2.39% and
++2.47% wall clock on the two workload-clean hybrid cells. The benefit is measured
+and material, and was missing from earlier revisions of this document: the
+fast-tier metadata reservation falls by 134-310 MiB and fast-tier residency rises
+**+2.65% (lru c13), +8.04% (lfu c13), +2.40% (lru c53), +3.14% (lfu c53)**. So
+hybrid buys roughly 2.4-8% more objects held in DRAM for roughly 2.4% throughput.
+Whether that trade pays depends on a hit-rate effect this matrix is too
+confounded to measure.
+
+The property that would make the feature worth taking is not a cluster but a
+shape: **many small objects in a hybrid design**, where the fast-tier metadata
+reserve is large relative to the tier. That is exactly `lfu-compact-hybrid`
+cluster13 — 4.4M objects, 909 MiB of reserve, +8.04% fast-tier residency, the
+largest benefit anywhere here. It is also the single cell whose two arms ran
+different workloads (section 5.4). **The one case where this feature might pay
+for itself is the one case this experiment cannot measure.**
+
+The generalisable finding is unchanged and depends on none of the above: CXL is
+viable for cold **value bytes**, which are large and touched rarely, and not for
+**metadata**, which is small and touched on every operation.
