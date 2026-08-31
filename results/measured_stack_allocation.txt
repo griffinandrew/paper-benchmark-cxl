@@ -1,0 +1,31 @@
+FLAT eviction stacks: MEASURED allocated bytes/object vs what get_policy_overhead CHARGES
+
+policy                     measured    charged     delta  under-count        R^2
+----------------------------------------------------------------------------------
+lru                            72.0         56      16.0          29%   1.000000
+lru-compact                    56.0         28      28.0         100%   1.000000
+fifo                           72.0         56      16.0          29%   1.000000
+fifo-compact                   56.0         28      28.0         100%   1.000000
+clock                          72.0         57      15.0          26%   1.000000
+clock-compact                  56.0         29      27.0          93%   1.000000
+sieve                          72.0         57      15.0          26%   1.000000
+sieve-compact                  56.0         29      27.0          93%   1.000000
+mru                            72.0         56      16.0          29%   1.000000
+mru-compact                    56.0         28      28.0         100%   1.000000
+lfu                           128.0         84      44.0          52%   1.000000
+lfu-compact                    56.0         32      24.0          75%   1.000000
+2q-0.25-0.5                    72.0         60      12.0          20%   1.000000
+2q-compact-0.25-0.5            72.0         36      36.0         100%   1.000000
+s3-fifo-0.1                    72.0         61      11.0          18%   1.000000
+s3-fifo-compact-0.1            72.0         36      36.0         100%   1.000000
+arc                            72.0         60      12.0          20%   1.000000
+
+compact vs original, MEASURED:
+  lru                       72.0 -> 56.0      -22.2%   (charged 56 -> 28, -50%)
+  fifo                      72.0 -> 56.0      -22.2%   (charged 56 -> 28, -50%)
+  clock                     72.0 -> 56.0      -22.2%   (charged 57 -> 29, -49%)
+  sieve                     72.0 -> 56.0      -22.2%   (charged 57 -> 29, -49%)
+  mru                       72.0 -> 56.0      -22.2%   (charged 56 -> 28, -50%)
+  lfu                      128.0 -> 56.0      -56.3%   (charged 84 -> 32, -62%)
+  2q-0.25-0.5               72.0 -> 72.0       -0.0%   (charged 60 -> 36, -40%)
+  s3-fifo-0.1               72.0 -> 72.0       -0.0%   (charged 61 -> 36, -41%)
