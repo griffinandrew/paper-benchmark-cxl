@@ -205,6 +205,132 @@ floor, not an agreement worth reporting as one: cluster13 has 72,472,986
 distinct keys against 72,473,279 fills, so no policy and no architecture can do
 better there, only match it.
 
+### 2.5 GET and SET in full
+
+Everything the runs report per operation, for all sixteen cells: counts, the
+complete latency distributions out to max, payload size distributions, and
+delivered bandwidth. Sections 2.1-2.4 quote the mean, p50 and p99 from these.
+
+Read-through means the two counts are complementary: a hit is a GET, a miss
+becomes a SET. `replayed` is exactly the trace record count in every cell
+(151,075,072 for cluster13, 167,242,141 for cluster53), which is the check that
+no operation was dropped or double-counted.
+
+#### Operation counts, payload sizes and delivered bandwidth
+
+| policy | cl | design | stacks | GETs (hits) | SETs (fills) | replayed | miss | avg GET B | avg SET B | GET BW | SET BW |
+|---|---|---|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| lru-compact | 13 | flat | DRAM | 78,601,793 | 72,473,279 | 151,075,072 | 0.479717 | 4,656 | 5,606 | 4.85 GiB/s | 1.76 GiB/s |
+| lru-compact | 13 | flat | CXL | 78,601,793 | 72,473,279 | 151,075,072 | 0.479717 | 4,656 | 5,606 | 4.76 GiB/s | 1.73 GiB/s |
+| lru-compact | 53 | flat | DRAM | 165,172,758 | 2,069,383 | 167,242,141 | 0.012374 | 10,397 | 9,189 | 2.87 GiB/s | 1.07 GiB/s |
+| lru-compact | 53 | flat | CXL | 165,172,759 | 2,069,382 | 167,242,141 | 0.012374 | 10,397 | 9,189 | 2.81 GiB/s | 1.06 GiB/s |
+| lfu-compact | 13 | flat | DRAM | 66,553,038 | 84,522,034 | 151,075,072 | 0.559470 | 4,170 | 5,854 | 6.05 GiB/s | 1.89 GiB/s |
+| lfu-compact | 13 | flat | CXL | 67,597,364 | 83,477,708 | 151,075,072 | 0.552558 | 4,202 | 5,849 | 5.77 GiB/s | 1.86 GiB/s |
+| lfu-compact | 53 | flat | DRAM | 162,760,933 | 4,481,208 | 167,242,141 | 0.026795 | 10,542 | 4,752 | 2.89 GiB/s | 1.07 GiB/s |
+| lfu-compact | 53 | flat | CXL | 162,873,034 | 4,369,107 | 167,242,141 | 0.026124 | 10,536 | 4,840 | 2.84 GiB/s | 1.06 GiB/s |
+| lru-compact | 13 | hybrid | DRAM | 78,601,803 | 72,473,269 | 151,075,072 | 0.479717 | 4,656 | 5,606 | 3.00 GiB/s | 1.20 GiB/s |
+| lru-compact | 13 | hybrid | CXL | 78,601,803 | 72,473,269 | 151,075,072 | 0.479717 | 4,656 | 5,606 | 2.92 GiB/s | 1.17 GiB/s |
+| lru-compact | 53 | hybrid | DRAM | 165,208,086 | 2,034,055 | 167,242,141 | 0.012162 | 10,398 | 9,103 | 2.59 GiB/s | 1.30 GiB/s |
+| lru-compact | 53 | hybrid | CXL | 165,208,087 | 2,034,054 | 167,242,141 | 0.012162 | 10,398 | 9,103 | 2.54 GiB/s | 1.25 GiB/s |
+| lfu-compact | 13 | hybrid | DRAM | 67,198,261 | 83,876,811 | 151,075,072 | 0.555200 | 4,193 | 5,848 | 5.49 GiB/s | 1.81 GiB/s |
+| lfu-compact | 13 | hybrid | CXL | 68,358,772 | 82,716,300 | 151,075,072 | 0.547518 | 4,229 | 5,842 | 5.01 GiB/s | 1.69 GiB/s |
+| lfu-compact | 53 | hybrid | DRAM | 162,956,690 | 4,285,451 | 167,242,141 | 0.025624 | 10,533 | 4,822 | 2.68 GiB/s | 979.39 MiB/s |
+| lfu-compact | 53 | hybrid | CXL | 163,060,875 | 4,181,266 | 167,242,141 | 0.025001 | 10,527 | 4,916 | 2.66 GiB/s | 968.41 MiB/s |
+
+#### GET latency, full distribution (ns)
+
+| policy | cl | design | stacks | mean | p50 | p75 | p90 | p95 | p99 | p99.9 | p99.99 | p99.999 | max |
+|---|---|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| lru-compact | 13 | flat | DRAM | **895** | 256 | 845 | 2,017 | 3,687 | 8,711 | 18,777 | 34,106 | 54,949 | 5,449,510 |
+| lru-compact | 13 | flat | CXL | **911** | 271 | 867 | 2,072 | 3,747 | 8,874 | 19,228 | 34,987 | 56,012 | 561,757 |
+| lru-compact | 53 | flat | DRAM | **3,378** | 2,170 | 5,089 | 7,874 | 9,144 | 13,196 | 18,885 | 25,466 | 40,826 | 1,806,376 |
+| lru-compact | 53 | flat | CXL | **3,446** | 2,228 | 5,202 | 7,916 | 9,153 | 13,217 | 18,891 | 25,375 | 39,962 | 1,922,579 |
+| lfu-compact | 13 | flat | DRAM | **642** | 222 | 498 | 1,303 | 2,660 | 6,470 | 13,828 | 22,971 | 39,262 | 6,959,649 |
+| lfu-compact | 13 | flat | CXL | **678** | 247 | 552 | 1,411 | 2,780 | 6,652 | 14,340 | 23,967 | 42,081 | 3,259,376 |
+| lfu-compact | 53 | flat | DRAM | **3,399** | 2,225 | 5,147 | 7,854 | 9,119 | 13,227 | 18,827 | 25,440 | 45,133 | 836,772 |
+| lfu-compact | 53 | flat | CXL | **3,454** | 2,273 | 5,232 | 7,921 | 9,157 | 13,206 | 18,903 | 25,488 | 42,470 | 1,854,741 |
+| lru-compact | 13 | hybrid | DRAM | **1,445** | 272 | 952 | 2,729 | 5,459 | 19,866 | 65,933 | 158,237 | 309,307 | 1,580,336 |
+| lru-compact | 13 | hybrid | CXL | **1,483** | 275 | 991 | 2,806 | 5,549 | 20,350 | 68,301 | 166,496 | 318,701 | 3,153,335 |
+| lru-compact | 53 | hybrid | DRAM | **3,740** | 2,268 | 5,425 | 8,361 | 10,479 | 17,606 | 44,306 | 74,008 | 105,032 | 3,645,330 |
+| lru-compact | 53 | hybrid | CXL | **3,819** | 2,332 | 5,540 | 8,496 | 10,659 | 17,811 | 44,312 | 74,867 | 105,927 | 1,066,381 |
+| lfu-compact | 13 | hybrid | DRAM | **712** | 229 | 519 | 1,431 | 2,870 | 7,221 | 20,826 | 58,865 | 120,339 | 474,391 |
+| lfu-compact | 13 | hybrid | CXL | **786** | 228 | 582 | 1,645 | 3,161 | 8,128 | 25,393 | 65,086 | 136,425 | 3,550,317 |
+| lfu-compact | 53 | hybrid | DRAM | **3,655** | 2,314 | 5,471 | 8,349 | 10,306 | 15,934 | 23,805 | 34,856 | 72,796 | 1,456,292 |
+| lfu-compact | 53 | hybrid | CXL | **3,681** | 2,364 | 5,461 | 8,378 | 10,283 | 16,039 | 23,896 | 35,141 | 67,974 | 4,540,870 |
+
+#### SET latency, full distribution (ns)
+
+| policy | cl | design | stacks | mean | p50 | p75 | p90 | p95 | p99 | p99.9 | p99.99 | p99.999 | max |
+|---|---|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| lru-compact | 13 | flat | DRAM | **2,968** | 736 | 2,226 | 7,882 | 13,638 | 27,727 | 80,356 | 137,637 | 345,567 | 6,562,767 |
+| lru-compact | 13 | flat | CXL | **3,011** | 746 | 2,270 | 8,046 | 13,820 | 27,919 | 80,788 | 139,986 | 376,988 | 6,715,183 |
+| lru-compact | 53 | flat | DRAM | **8,004** | 2,145 | 11,535 | 23,234 | 28,271 | 41,869 | 78,326 | 268,760 | 970,138 | 2,040,645 |
+| lru-compact | 53 | flat | CXL | **8,038** | 2,181 | 11,830 | 23,251 | 28,211 | 41,343 | 68,082 | 264,090 | 949,313 | 2,096,474 |
+| lfu-compact | 13 | flat | DRAM | **2,882** | 788 | 2,404 | 7,893 | 12,842 | 24,885 | 52,050 | 114,105 | 273,982 | 7,442,876 |
+| lfu-compact | 13 | flat | CXL | **2,934** | 802 | 2,454 | 8,047 | 13,090 | 25,224 | 52,553 | 117,172 | 299,111 | 7,169,137 |
+| lfu-compact | 53 | flat | DRAM | **4,120** | 1,118 | 2,891 | 12,614 | 21,120 | 31,312 | 51,580 | 248,587 | 806,030 | 2,065,090 |
+| lfu-compact | 53 | flat | CXL | **4,243** | 1,186 | 3,081 | 13,175 | 21,465 | 31,452 | 48,755 | 248,589 | 537,271 | 2,004,428 |
+| lru-compact | 13 | hybrid | DRAM | **4,345** | 815 | 2,570 | 10,126 | 18,053 | 57,851 | 161,083 | 291,562 | 623,495 | 7,442,593 |
+| lru-compact | 13 | hybrid | CXL | **4,453** | 838 | 2,641 | 10,337 | 18,353 | 59,665 | 166,038 | 299,821 | 650,387 | 7,417,648 |
+| lru-compact | 53 | hybrid | DRAM | **6,520** | 2,235 | 9,967 | 17,375 | 22,342 | 34,893 | 72,043 | 255,762 | 1,771,788 | 2,979,871 |
+| lru-compact | 53 | hybrid | CXL | **6,765** | 2,207 | 10,229 | 17,846 | 23,242 | 39,007 | 82,094 | 262,051 | 969,840 | 2,495,010 |
+| lfu-compact | 13 | hybrid | DRAM | **3,010** | 920 | 2,603 | 7,547 | 12,758 | 26,170 | 63,671 | 152,695 | 390,628 | 7,713,892 |
+| lfu-compact | 13 | hybrid | CXL | **3,219** | 1,011 | 2,832 | 7,994 | 13,471 | 27,715 | 67,884 | 167,111 | 536,198 | 17,275,544 |
+| lfu-compact | 53 | hybrid | DRAM | **4,696** | 1,844 | 4,207 | 12,447 | 21,232 | 32,819 | 52,967 | 248,893 | 893,272 | 4,543,078 |
+| lfu-compact | 53 | hybrid | CXL | **4,842** | 1,918 | 4,428 | 12,901 | 21,591 | 33,283 | 53,911 | 250,276 | 910,075 | 3,527,937 |
+
+#### Payload size distribution (bytes)
+
+| policy | cl | design | stacks | GET sizes | SET sizes |
+|---|---|---|---|---|---|
+| lru-compact | 13 | flat | DRAM | p1 98 | p25 123 | p50 123 | p75 1872 | p90 13052 | p99 67159 B | - |
+| lru-compact | 13 | flat | CXL | p1 98 | p25 123 | p50 123 | p75 1872 | p90 13052 | p99 67159 B | - |
+| lru-compact | 53 | flat | DRAM | p1 8 | p25 8 | p50 6831 | p75 16368 | p90 28677 | p99 38082 B | - |
+| lru-compact | 53 | flat | CXL | p1 8 | p25 8 | p50 6831 | p75 16368 | p90 28677 | p99 38082 B | - |
+| lfu-compact | 13 | flat | DRAM | p1 98 | p25 123 | p50 123 | p75 123 | p90 10874 | p99 65771 B | - |
+| lfu-compact | 13 | flat | CXL | p1 98 | p25 123 | p50 123 | p75 123 | p90 11028 | p99 65807 B | - |
+| lfu-compact | 53 | flat | DRAM | p1 8 | p25 8 | p50 7128 | p75 16764 | p90 28809 | p99 38082 B | - |
+| lfu-compact | 53 | flat | CXL | p1 8 | p25 8 | p50 7095 | p75 16698 | p90 28776 | p99 38082 B | - |
+| lru-compact | 13 | hybrid | DRAM | p1 98 | p25 123 | p50 123 | p75 1859 | p90 13027 | p99 67140 B | - |
+| lru-compact | 13 | hybrid | CXL | p1 98 | p25 123 | p50 123 | p75 1859 | p90 13027 | p99 67140 B | - |
+| lru-compact | 53 | hybrid | DRAM | p1 8 | p25 8 | p50 6831 | p75 16335 | p90 28677 | p99 38082 B | - |
+| lru-compact | 53 | hybrid | CXL | p1 8 | p25 8 | p50 6831 | p75 16368 | p90 28677 | p99 38082 B | - |
+| lfu-compact | 13 | hybrid | DRAM | p1 98 | p25 123 | p50 123 | p75 123 | p90 10994 | p99 65894 B | - |
+| lfu-compact | 13 | hybrid | CXL | p1 98 | p25 123 | p50 123 | p75 123 | p90 11198 | p99 65898 B | - |
+| lfu-compact | 53 | hybrid | DRAM | p1 8 | p25 8 | p50 7095 | p75 16665 | p90 28776 | p99 38082 B | - |
+| lfu-compact | 53 | hybrid | CXL | p1 8 | p25 8 | p50 7062 | p75 16665 | p90 28776 | p99 38115 B | - |
+
+_Latency sampling: cluster13 SET percentiles come from a 10M reservoir over 72-84M operations; cluster53 SET percentiles are full-population (its SET counts fall below the reservoir). GET percentiles are reservoir-sampled on both clusters. See section 6.4._
+
+Four things to notice.
+
+**Delivered bandwidth is where the tiering penalty is most legible.** Request
+sizes are identical between flat and hybrid to within rounding, so the
+bandwidth column isolates the cost cleanly: `lru-compact` cluster13 falls from
+4.85 to 3.00 GiB/s on GET (-38%) for the same bytes requested. That is the same
+effect section 2.4 sees as +61% GET mean, measured on the other side.
+
+**The payload distributions explain why the mean and the median disagree.**
+cluster13 GETs are `p50 123 B` against a `4,656 B` mean -- a 38x skew -- so mean
+latency tracks the large-object tail, not the typical request. cluster53 is the
+opposite shape: `p50 6,831 B`, a median request that is already large. This is
+why cluster13's hybrid penalty is +6.25% at p50 and +128% at p99, and why
+quoting its mean without its p50 misleads.
+
+**GET and SET pull in opposite directions on cluster53 LFU.** SET mean there is
+roughly half LRU's (4,120 vs 8,004 ns) because frequency ranking retains the
+small end of the size distribution, so its fills are smaller (avg SET 4,752 B
+against LRU's 9,189 B). It is serving different bytes, not doing the same work
+faster -- the same composition effect documented for cross-policy latency in
+`flat_vs_hybrid_allocator_confound.md`.
+
+**The LRU cells are bit-identical across stack placement; the LFU cells are
+not.** `lru-compact` cluster13 reports the same 78,601,793 GETs and 72,473,279
+SETs on both arms. cluster53 differs by exactly one access
+(165,172,758 vs 165,172,759). LFU differs by ~10^5-10^6. That asymmetry is the
+evidence behind section 5.1: LRU self-corrects from a perturbation, LFU's
+path-dependent frequency counters do not.
+
 ---
 
 ## 3. Why: the metadata is too small to matter <a name="why"></a>
