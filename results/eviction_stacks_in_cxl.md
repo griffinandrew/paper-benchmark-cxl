@@ -323,14 +323,29 @@ Documented because each one has already produced a wrong number.
 
 **6.1 `MIGSTATS promo_tot`/`demo_tot` are enqueued INTENTS, not completions.**
 `worker/policy/mod.rs:1363` records the batch handed to `apply_migration_batches`;
-completions are counted at `:259-292`, only when `apply_migration` returns true,
-and surface as `Promotions:`/`Demotions:` in the `*** TIER stats ***` block. The
-library's own doc comment at `mod.rs:1340` records a measured **4.6x**
-overstatement. All four reporter scripts (`full_report.py`, `pmem_report.py`,
-`flatpmem_report.py`, `vs_flat.py`) read the MIGSTATS counter, and
-`full_report.py:70` labels it "completions". **Every table previously generated
-from those scripts overstates promotions and demotions.** The tables above use
-TIER stats.
+completions are counted at `:259-292`, only when `apply_migration` returns true
+(i.e. `Object::set_data` actually ran), and surface as `Promotions:` /
+`Demotions:` in the `*** TIER stats ***` block. Both counters are legitimate and
+both are emitted on purpose -- the MIGSTATS pair describes migration BATCH SIZES,
+which is a useful diagnostic; it is simply not a migration count.
+
+The library's counters are correct and have been since the fix recorded in the
+doc comment at `mod.rs:1340`, which measured a **4.6x** overstatement from the
+pre-fix behaviour. **That 4.6x is historical and is NOT the error in this
+matrix.** Measured here, intents exceed completions by 456 of 1,985,507 on
+`lfu-compact-hybrid` cluster13 -- **0.023% on this matrix** -- and by exactly
+zero on both `lru-compact-hybrid` cells, where every enqueued migration
+completed. Quote the 4.6x only as the reason the library changed, never as an
+error bar on these numbers.
+
+The defect was downstream, in the reporting. `full_report.py` PARSED the correct
+TIER values into `d["promo"]`/`d["demo"]` and then printed `mig[3]`/`mig[2]` --
+the intents -- under a header reading "(completions, from MIGSTATS/DIVERGE)";
+`pmem_report.py` never parsed the TIER values at all. Both now print
+completions, with the intent counts kept in their own clearly-labelled columns.
+`flatpmem_report.py` and `vs_flat.py` were never affected: they read only evict
+counters, and flat runs have no migrations. The tables above were built directly
+from the TIER block and are unaffected either way.
 
 **6.2 `GETs/sec` and `SETs/sec` are not throughput.** They equal `1e9/mean
 latency` to within 0.1% in all sixteen cells — the reciprocal of mean latency,
