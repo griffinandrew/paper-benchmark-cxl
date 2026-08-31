@@ -89,6 +89,122 @@ in 8 of 8. opTime is worse in 8 of 8. Resident objects are unchanged or worse in
 6 of 8. Nothing improves anywhere except two sub-0.2% object counts that
 [section 5](#caveats) argues should not be read as an effect at all.
 
+### 2.4 Hybrid compact against the all-DRAM baseline
+
+The same sixteen cells re-cut along the other axis: what does *tiering* cost,
+against the flat all-DRAM cache running the same policy and the same eviction
+stack placement? Positive means the hybrid is worse.
+
+#### DRAM eviction stacks
+
+| policy | cluster | metric | all-DRAM flat | hybrid compact | change |
+|---|---|---|--:|--:|--:|
+| lru-compact | 13 | GET mean | 895 ns | 1,445 ns | **+61.45%** |
+|  |  | GET p50 | 256 ns | 272 ns | **+6.25%** |
+|  |  | GET p99 | 8,711 ns | 19,866 ns | **+128.06%** |
+|  |  | SET mean | 2,968 ns | 4,345 ns | **+46.39%** |
+|  |  | objects | 1,911,194 | 1,955,425 | **+2.31%** |
+|  |  | miss | 0.479717 | 0.479717 | **-0.00%** |
+|  |  | op time | 285.4 s | 428.5 s | **+50.11%** |
+|  |  | wall | 501.2 s | 783.1 s | **+56.25%** |
+| lfu-compact | 13 | GET mean | 642 ns | 712 ns | **+10.90%** |
+|  |  | GET p50 | 222 ns | 229 ns | **+3.15%** |
+|  |  | GET p99 | 6,470 ns | 7,221 ns | **+11.61%** |
+|  |  | SET mean | 2,882 ns | 3,010 ns | **+4.44%** |
+|  |  | objects | 4,319,895 | 4,415,055 | **+2.20%** |
+|  |  | miss | 0.559470 | 0.555200 | **-0.76%** |
+|  |  | op time | 286.3 s | 300.3 s | **+4.89%** |
+|  |  | wall | 511.1 s | 522.6 s | **+2.25%** |
+| lru-compact | 53 | GET mean | 3,378 ns | 3,740 ns | **+10.72%** |
+|  |  | GET p50 | 2,170 ns | 2,268 ns | **+4.52%** |
+|  |  | GET p99 | 13,196 ns | 17,606 ns | **+33.42%** |
+|  |  | SET mean | 8,004 ns | 6,520 ns | **-18.54%** |
+|  |  | objects | 886,669 | 902,774 | **+1.82%** |
+|  |  | miss | 0.012374 | 0.012162 | **-1.71%** |
+|  |  | op time | 574.5 s | 631.1 s | **+9.86%** |
+|  |  | wall | 910.4 s | 989.5 s | **+8.68%** |
+| lfu-compact | 53 | GET mean | 3,399 ns | 3,655 ns | **+7.53%** |
+|  |  | GET p50 | 2,225 ns | 2,314 ns | **+4.00%** |
+|  |  | GET p99 | 13,227 ns | 15,934 ns | **+20.47%** |
+|  |  | SET mean | 4,120 ns | 4,696 ns | **+13.98%** |
+|  |  | objects | 845,071 | 858,731 | **+1.62%** |
+|  |  | miss | 0.026795 | 0.025624 | **-4.37%** |
+|  |  | op time | 571.7 s | 615.7 s | **+7.70%** |
+|  |  | wall | 906.1 s | 968.9 s | **+6.93%** |
+
+#### CXL eviction stacks
+
+| policy | cluster | metric | all-DRAM flat | hybrid compact | change |
+|---|---|---|--:|--:|--:|
+| lru-compact | 13 | GET mean | 911 ns | 1,483 ns | **+62.79%** |
+|  |  | GET p50 | 271 ns | 275 ns | **+1.48%** |
+|  |  | GET p99 | 8,874 ns | 20,350 ns | **+129.32%** |
+|  |  | SET mean | 3,011 ns | 4,453 ns | **+47.89%** |
+|  |  | objects | 1,911,194 | 1,955,425 | **+2.31%** |
+|  |  | miss | 0.479717 | 0.479717 | **-0.00%** |
+|  |  | op time | 289.8 s | 439.3 s | **+51.57%** |
+|  |  | wall | 505.9 s | 802.5 s | **+58.62%** |
+| lfu-compact | 13 | GET mean | 678 ns | 786 ns | **+15.93%** |
+|  |  | GET p50 | 247 ns | 228 ns | **-7.69%** |
+|  |  | GET p99 | 6,652 ns | 8,128 ns | **+22.19%** |
+|  |  | SET mean | 2,934 ns | 3,219 ns | **+9.71%** |
+|  |  | objects | 4,296,488 | 4,365,343 | **+1.60%** |
+|  |  | miss | 0.552558 | 0.547518 | **-0.91%** |
+|  |  | op time | 290.8 s | 320.0 s | **+10.06%** |
+|  |  | wall | 513.9 s | 572.2 s | **+11.35%** |
+| lru-compact | 53 | GET mean | 3,446 ns | 3,819 ns | **+10.82%** |
+|  |  | GET p50 | 2,228 ns | 2,332 ns | **+4.67%** |
+|  |  | GET p99 | 13,217 ns | 17,811 ns | **+34.76%** |
+|  |  | SET mean | 8,038 ns | 6,765 ns | **-15.84%** |
+|  |  | objects | 886,669 | 902,774 | **+1.82%** |
+|  |  | miss | 0.012374 | 0.012162 | **-1.71%** |
+|  |  | op time | 585.8 s | 644.7 s | **+10.05%** |
+|  |  | wall | 916.0 s | 1013.1 s | **+10.60%** |
+| lfu-compact | 53 | GET mean | 3,454 ns | 3,681 ns | **+6.57%** |
+|  |  | GET p50 | 2,273 ns | 2,364 ns | **+4.00%** |
+|  |  | GET p99 | 13,206 ns | 16,039 ns | **+21.45%** |
+|  |  | SET mean | 4,243 ns | 4,842 ns | **+14.12%** |
+|  |  | objects | 846,499 | 860,218 | **+1.62%** |
+|  |  | miss | 0.026124 | 0.025001 | **-4.30%** |
+|  |  | op time | 581.1 s | 620.5 s | **+6.78%** |
+|  |  | wall | 912.1 s | 958.3 s | **+5.06%** |
+
+**Hybrid compact is worse on GET mean in 8 of 8 pairings**, by +6.57% to
++62.79%, and worse on GET p99 in 8 of 8, by +11.61% to +129.32%. It buys
+1.6-2.3% more resident objects everywhere, and a slightly lower miss ratio on
+cluster53 (-1.71% to -4.37%).
+
+Three things in this table are worth more than the headline number.
+
+**The two penalties are independent.** Compare the same cell at the two stack
+placements: lru-compact on cluster13 costs +61.45% of GET mean with DRAM stacks
+and +62.79% with CXL stacks; lfu-compact on cluster53 costs +7.53% and +6.57%.
+The tiering penalty is essentially unchanged by where the eviction stacks live,
+and section 2.1/2.2's stack-placement penalty is essentially unchanged by
+whether the design is tiered. They are separate costs that add, not a single
+interacting effect -- which is what lets the rest of this document treat stack
+placement in isolation.
+
+**The one cell where hybrid wins is a SET-path result, not a tiering win.**
+lru-compact on cluster53 improves SET mean by -18.54% (DRAM stacks) and -15.84%
+(CXL). It is the only metric in the entire matrix where a hybrid beats its flat
+counterpart, and it does not carry over to LFU on the same cluster (+13.98%),
+so it is a property of that policy/trace pairing rather than of tiering.
+
+**Do not quote the +128% p99 without its caveat.** The worst cell by a wide
+margin is lru-compact on cluster13, and section 5.2 explains why: that cell
+records 715 promotions against 71,918,955 demotions, so the fast tier does no
+useful work at all and the number measures pure tiering overhead against a
+workload that structurally cannot benefit. The honest range for the tiering
+penalty on a trace that actually exercises the design is cluster53's +6.57% to
++10.82% on GET mean.
+
+Note also that miss ratio on cluster13 is IDENTICAL to six decimal places
+(0.479717) between flat and hybrid for lru-compact. That is the compulsory-miss
+floor, not an agreement worth reporting as one: cluster13 has 72,472,986
+distinct keys against 72,473,279 fills, so no policy and no architecture can do
+better there, only match it.
+
 ---
 
 ## 3. Why: the metadata is too small to matter <a name="why"></a>
