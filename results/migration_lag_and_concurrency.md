@@ -148,8 +148,62 @@ checked from existing output: by end of run the queue has drained, so
 `demo_tot` and the completed `Demotions:` agree and carry no information about
 the peak.
 
-The exact instrument is two atomics incremented on push and decremented on
-completion, split by tier. Not yet built.
+### Measured, not estimated
+
+`PENDING_DEMOTE_MAX` / `PENDING_PROMOTE_MAX` now measure this directly -- one
+counter per destination tier, incremented on push and decremented however the
+consumer loop body exits. The estimate above was 48% too high:
+
+| config | pending demote | pending promote | net mis-placed | net GB | vs 5 GB budget |
+|---|--:|--:|--:|--:|--:|
+| merged uniform c1 | 2,424 | 618 | 1,806 | 0.03 | ~0% |
+| merged uniform c5 | 814,258 | 499,485 | **314,773** | **5.20** | **104%** |
+| split uniform c5 | 924,352 | 559,112 | **365,240** | **6.03** | **121%** |
+| merged standard_web c5 | 2,369 | 776 | 1,593 | 0.03 | ~0% |
+
+The estimate assumed the pending queue carried the run's overall 68/32
+demote:promote mix. It carries 62/38. Note the split design is WORSE than the
+merged one here -- the per-shard watermarks reduce the backlog.
+
+### The latency bias this creates
+
+The slow tier holds ~529k objects. At `-c 5`, **314,773 of them are physically
+in DRAM**, so roughly **59% of the "slow" tier is served at DRAM speed** while
+the statistics attribute those hits to Optane.
+
+A tiered run at multiple clients therefore reports BETTER GET latency than its
+own tier assignment implies, and the true figure is worse than measured. The
+bias is ~0% at one client and ~59% at five: it appears exactly when the cache
+is hammered.
+
+### It is policy-dependent, and that distorts comparison
+
+The backlog is manufactured by the admission rule. LRU-hybrid admits every
+insert to fast, so every insert immediately owes a demotion. 2Q-hybrid and
+S3-FIFO-hybrid admit to SLOW, so they owe none. Measured on uniform_baseline at
+`-c 5`:
+
+| policy | queue depth | pending demote | pending promote | net | GET mean |
+|---|--:|--:|--:|--:|--:|
+| `lru-compact-hybrid` | 1,483,573 | **925,702** | 561,151 | **+364,551** | 14,147 ns |
+| `2q-compact-hybrid-0.1` | 3,832 | **0** | 3,832 | -3,832 | 21,989 ns |
+| `s3-fifo-compact-hybrid-0.1` | 3,151 | **0** | 3,151 | -3,151 | 22,085 ns |
+| `lfu-compact-hybrid` | 70,430 | 37,422 | 33,781 | +3,641 | 18,521 ns |
+
+A 387x difference in queue depth, and the bias points in OPPOSITE directions:
+LRU's net is positive (counted slow, physically DRAM -- optimistic), 2Q's is
+negative (counted fast, physically slow -- pessimistic, and negligible).
+
+So at five clients LRU appears 36% faster than 2Q while enjoying 365k objects'
+worth of DRAM speed the accounting says it should not have. **Multi-client
+tiered policy comparison is not sound without correcting for this.**
+
+### The committed sweeps are NOT affected
+
+`sweep_full.sh` and `synsweep.sh` both run `-c 1`, where the mis-placement is
+1,806 objects -- 0.03 GB, under 1% of the fast budget. So
+`policy_sweep_110_cells.md` and `policy_sweep_165_synthetic.md` stand. The
+problem is confined to multi-client runs.
 
 ## 6. What this says about merged vs split
 
