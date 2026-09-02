@@ -308,12 +308,31 @@ enum Fallback {
 	Drop,
 }
 
+/// What to give a record whose key carries no TTL anywhere in the trace.
+///
+/// Leaving it at 0 is safe in the sense that `access.rs` decodes 0 to `None`
+/// and `Expiries::insert` drops a `None` expiry without indexing it, so the
+/// object never expires rather than expiring at once. But "never expires" is
+/// still a modelling choice: on cluster19 it makes 100,390,021 records (6.7%)
+/// immortal while the rest live 6-8 hours, which inflates the working set over
+/// a long run.
+#[derive(Clone, Copy)]
+enum FallbackTtl {
+	/// Leave it at 0, i.e. no expiry. Honest, and right when the residue is
+	/// negligible -- cluster13's is 0.044%.
+	Keep,
+	Fixed(u32),
+	/// The median TTL over every record in the span that has one.
+	Median,
+}
+
 struct Opts {
 	input: String,
 	output: String,
 	patch: Patch,
 	ttl: TtlSource,
 	fallback: Fallback,
+	fallback_ttl: FallbackTtl,
 	limit: Option<u64>,
 	resolve: Resolve,
 	source: Source,
@@ -452,6 +471,13 @@ usage: trace_fill <input.bin> <output.bin> [options]
   --fallback keep|median|drop|<bytes>
                          what to do for a key with no non-zero size anywhere
                          in the processed span (default: keep)
+  --fallback-ttl keep|median|<secs>
+                         TTL for a record whose key carries none anywhere in
+                         the span (default: keep, i.e. leave it with none).
+                         A 0 decodes to None and Expiries::insert drops it, so
+                         the object never expires rather than expiring at once
+                         -- but never-expiring is still a choice. On cluster19
+                         that is 6.7% of records; on cluster13, 0.044%.
   --limit <n>            process only the first n records; the resolution
                          table is built over the same span, so a prefix run
                          never borrows a size from beyond its own end
@@ -527,6 +553,7 @@ fn parse_args() -> Result<Opts, String> {
 	let mut patch = Patch::Gets;
 	let mut ttl = TtlSource::Donor;
 	let mut fallback = Fallback::Keep;
+	let mut fallback_ttl = FallbackTtl::Keep;
 	let mut limit = None;
 	let mut gets_only = false;
 	let mut resolve = Resolve::Nearest;
@@ -565,6 +592,16 @@ fn parse_args() -> Result<Opts, String> {
 					"drop" => Fallback::Drop,
 					n => Fallback::Fixed(
 						n.parse().map_err(|_| format!("bad --fallback {n}"))?,
+					),
+				}
+			},
+
+			"--fallback-ttl" => {
+				fallback_ttl = match value_of(&argv, &mut i, "--fallback-ttl")?.as_str() {
+					"keep" => FallbackTtl::Keep,
+					"median" => FallbackTtl::Median,
+					n => FallbackTtl::Fixed(
+						n.parse().map_err(|_| format!("bad --fallback-ttl {n}"))?,
 					),
 				}
 			},
@@ -664,6 +701,7 @@ fn parse_args() -> Result<Opts, String> {
 		patch,
 		ttl,
 		fallback,
+		fallback_ttl,
 		limit,
 		resolve,
 		source,
@@ -726,6 +764,7 @@ struct Report {
 	from_preceding: u64,
 	from_following: u64,
 	unresolved: u64,
+	ttl_filled: u64,
 	dropped: u64,
 	skipped_sets: u64,
 	written: u64,
@@ -738,7 +777,9 @@ fn run(opts: &Opts) -> io::Result<()> {
 
 	let mut table = SizeTable::with_capacity(1 << 20);
 	let mut sizes = Sizes::new();
+	let mut ttls = Sizes::new();
 	let want_median = matches!(opts.fallback, Fallback::Median);
+	let want_ttl_median = matches!(opts.fallback_ttl, FallbackTtl::Median);
 
 	// Whether this record may donate a size and TTL to zero-size records.
 	let donates = |r: &Record| {
@@ -762,9 +803,16 @@ fn run(opts: &Opts) -> io::Result<()> {
 				sizes.add(r.size);
 			}
 		}
+
+		// Outside the donor gate: a TTL is worth counting wherever it appears,
+		// even on a record whose size cannot donate under `--source sets`.
+		if want_ttl_median && r.ttl != 0 {
+			ttls.add(r.ttl);
+		}
 	})?;
 
 	let median = sizes.median();
+	let median_ttl = ttls.median();
 
 	eprintln!(
 		"  {} records, {} keys with a known size",
@@ -776,6 +824,13 @@ fn run(opts: &Opts) -> io::Result<()> {
 		match median {
 			Some(m) => eprintln!("  median non-zero size: {m} B"),
 			None => eprintln!("  median non-zero size: none (no sized records)"),
+		}
+	}
+
+	if want_ttl_median {
+		match median_ttl {
+			Some(m) => eprintln!("  median TTL: {m} s"),
+			None => eprintln!("  median TTL: none (no record carries one)"),
 		}
 	}
 
@@ -801,6 +856,7 @@ fn run(opts: &Opts) -> io::Result<()> {
 		from_preceding: 0,
 		from_following: 0,
 		unresolved: 0,
+		ttl_filled: 0,
 		dropped: 0,
 		skipped_sets: 0,
 		written: 0,
@@ -907,6 +963,25 @@ fn run(opts: &Opts) -> io::Result<()> {
 			}
 		}
 
+		// Applied after resolution, so it catches both an unresolved key and a
+		// resolved one whose donors never carried a TTL -- a key that is read
+		// but never written has a size and no expiry.
+		if ttl_scope && out_record.ttl == 0 {
+			match opts.fallback_ttl {
+				FallbackTtl::Keep => {},
+				FallbackTtl::Fixed(n) => out_record.ttl = n,
+				FallbackTtl::Median => {
+					if let Some(m) = median_ttl {
+						out_record.ttl = m;
+					}
+				},
+			}
+
+			if out_record.ttl != 0 {
+				rep.ttl_filled += 1;
+			}
+		}
+
 		// Applied last, and never to a record still at 0: a size of 0 is the
 		// marker for "never resolved", and turning it into `size_add` would
 		// silently invent an object.
@@ -1003,6 +1078,13 @@ fn print_report(opts: &Opts, rep: &Report, crc: u32) {
 
 	if rep.dropped > 0 {
 		println!("  dropped            {}", commas(rep.dropped));
+	}
+
+	if rep.ttl_filled > 0 {
+		println!(
+			"  TTL from fallback  {:>15}  (key carries none anywhere)",
+			commas(rep.ttl_filled),
+		);
 	}
 
 	if opts.gets_only {

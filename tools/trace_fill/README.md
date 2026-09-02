@@ -90,6 +90,45 @@ For a record needing a size or TTL, the donor is chosen by `--resolve`:
 cluster13 and 0.226% on cluster19, so worst-case provisioning is effectively
 free.
 
+## What the previous eval traces were
+
+`/home/griff/eval_traces` holds the traces every result before this was
+measured on. Their record counts are not the GET stream:
+
+| file | records | equals |
+|---|--:|---|
+| `cluster13.bin` | 151,075,072 | kia's non-zero-size GETs, exactly |
+| `cluster19.bin` | 888,230,858 | kia's non-zero-size GETs, exactly |
+
+So the zero-size GETs were being **dropped**, not filled: 50.7% of cluster13's
+references and 40.9% of cluster19's were absent from the replay. The filled
+traces live alongside them in `/home/griff/eval_traces_filled` rather than
+replacing them, so the two are comparable.
+
+## Fallback rates, per trace
+
+`--fallback median` and `--fallback-ttl median` synthesize values for keys the
+trace never describes. How much that invents varies by more than three orders
+of magnitude, so it is a per-trace decision, not a global one:
+
+| trace | records | synthesized size | synthesized TTL | median TTL |
+|---|--:|--:|--:|--:|
+| cluster13 | 306,714,865 | 0.04% | 0.04% | 300 s |
+| cluster26 | 110,140,681 | 0.11% | 0.11% | 60 s |
+| cluster19 | 1,503,297,007 | 6.58% | 6.68% | 25,910 s |
+| cluster53 | 217,410,986 | 20.1% | **49.6%** | 2,592,000 s |
+| cluster45 | 194,256,353 | **32.8%** | n/a | **no TTLs exist** |
+
+cluster13 and cluster26 are essentially all real. cluster53 would carry half
+its TTLs invented at 30 days. cluster45 contains no TTL on any record, so
+`--fallback-ttl` has nothing to draw on and every object is immortal whatever
+is asked for. Use 13 and 26 where TTL behaviour matters.
+
+Note also that TTL scale decides whether expiry is exercised at all: cluster13
+expires at ~300 s and will fire during a run, while cluster19 at 23,093-28,800 s
+will not unless the replay lasts 6.5+ hours, leaving the TTL worker idling at
+its 1000 ms tick.
+
 ## Relationship to Sari's traces
 
 `/mnt/disk1-20tb/Sari-Traces/FilteredTwitter_Binary` on the `intel` host holds
