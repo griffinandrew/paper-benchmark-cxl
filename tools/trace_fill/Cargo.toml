@@ -1,0 +1,17 @@
+# Its own workspace root. Without this, cargo folds this crate into the
+# benchmark package's manifest and it inherits keys that do not apply to it.
+# Deliberately dependency-free: it must not pull in paper-cache, so preparing
+# a trace never rebuilds the cache and can run while a sweep is timing.
+[workspace]
+
+[package]
+name = "trace_fill"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

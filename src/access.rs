@@ -125,3 +125,76 @@ impl Command {
 		}
 	}
 }
+
+#[cfg(test)]
+mod layout_tests {
+	use super::*;
+
+	/// Pins the on-disk record layout.
+	///
+	/// `tools/trace_fill` rewrites these trace files using its own hard-coded
+	/// copy of this layout. It is dependency-free on purpose, so that
+	/// preparing a trace never rebuilds paper-cache and can run while a sweep
+	/// is timing -- which means it cannot share this code and must be kept in
+	/// step by hand. If this test needs changing, `Record::decode`/`encode`
+	/// and `CHUNK` in that tool must change with it, or it will silently
+	/// corrupt every trace it touches.
+	#[test]
+	fn the_record_layout_is_pinned_at_25_bytes() {
+		assert_eq!(Access::chunk_size(), 25);
+
+		let access = Access {
+			timestamp: 0x0807_0605_0403_0201,
+			command: Command::Set,
+			key: 0x100F_0E0D_0C0B_0A09,
+			value: vec![0u8; 0x1234].into_boxed_slice(),
+			ttl: Some(0x1716_1514),
+		};
+
+		let mut buf = Vec::new();
+		access.as_chunk(&mut buf).unwrap();
+
+		assert_eq!(buf.len(), 25, "record grew or shrank");
+		assert_eq!(&buf[0..8], &[1, 2, 3, 4, 5, 6, 7, 8], "timestamp u64 LE");
+		assert_eq!(buf[8], 1, "command byte, SET == 1");
+		assert_eq!(&buf[9..17], &[9, 10, 11, 12, 13, 14, 15, 16], "key u64 LE");
+		assert_eq!(&buf[17..21], &[0x34, 0x12, 0, 0], "value_size u32 LE");
+		assert_eq!(&buf[21..25], &[0x14, 0x15, 0x16, 0x17], "ttl u32 LE");
+	}
+
+	#[test]
+	fn a_record_survives_a_round_trip() {
+		let access = Access {
+			timestamp: 12345,
+			command: Command::Get,
+			key: 0xDEAD_BEEF_1234_5678,
+			value: vec![0u8; 4096].into_boxed_slice(),
+			ttl: Some(900),
+		};
+
+		let mut buf = Vec::new();
+		access.as_chunk(&mut buf).unwrap();
+		let back = Access::from_chunk(&buf).unwrap();
+
+		assert_eq!(back.timestamp, access.timestamp);
+		assert!(back.command == Command::Get);
+		assert_eq!(back.key, access.key);
+		assert_eq!(back.value.len(), access.value.len());
+		assert_eq!(back.ttl, access.ttl);
+	}
+
+	/// `ttl == 0` on disk is the "no TTL" sentinel, not a zero-second TTL.
+	/// Every GET record in the Twitter traces carries 0 here, which is why
+	/// `tools/trace_fill` has to source a filled GET's TTL from a SET.
+	#[test]
+	fn a_zero_ttl_decodes_as_none() {
+		let mut buf = vec![0u8; 25];
+		buf[8] = 0;
+
+		assert_eq!(Access::from_chunk(&buf).unwrap().ttl, None);
+
+		buf[21..25].copy_from_slice(&300u32.to_le_bytes());
+
+		assert_eq!(Access::from_chunk(&buf).unwrap().ttl, Some(300));
+	}
+}
